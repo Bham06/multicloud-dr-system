@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Todo App{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>My Todo List</h2>
+    <div>
+        <span class="text-muted me-3">Welcome, {{ current_user.username }}!</span>
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary btn-sm">Logout</a>
+    </div>
+</div>
+
+<!-- Add Task Form -->
+<div class="card shadow mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Add New Task</h5>
+        <form method="POST" action="{{ url_for('add_task') }}">
+            <div class="input-group">
+                <input type="text" class="form-control" name="title" placeholder="What needs to be done?" required>
+                <button type="submit" class="btn btn-primary">Add Task</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Tasks List -->
+<div class="card shadow">
+    <div class="card-body">
+        <h5 class="card-title">Tasks ({{ tasks|length }})</h5>
+
+        {% if tasks %}
+        <div class="list-group">
+            {% for task in tasks %}
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+                <div class="flex-grow-1">
+                    <span class="{% if task.completed %}completed{% endif %}">
+                        {{ task.title }}
+                    </span>
+                    <small class="text-muted d-block">
+                        Added: {{ task.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    </small>
+                </div>
+
+                <div class="btn-group btn-group-sm task-actions">
+                    {% if not task.completed %}
+                    <a href="{{ url_for('complete', task_id=task.id) }}" class="btn btn-outline-success"
+                        title="Mark Complete">✓</a>
+                    {% else %}
+                    <a href="{{ url_for('complete', task_id=task.id) }}" class="btn btn-success"
+                        title="Mark Incomplete">✓</a>
+                    {% endif %}
+
+                    <a href="{{ url_for('delete', task_id=task.id) }}" class="btn btn-outline-danger"
+                        onclick="return confirm('Are you sure you want to delete this task?')" title="Delete Task">×</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-4">
+            <p>No tasks yet. Add your first task above!</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
