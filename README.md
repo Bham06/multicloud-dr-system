@@ -334,10 +334,6 @@ Recommended improvements
 - Harden health checks (include latency, error rates) and add backoff/retry for transient errors.
 - Add automated tests for failover logic (unit tests that mock compute and requests).
 
-License
--------
-This repository does not include a license file. Add a LICENSE if you want to make the code open source. Suggested: Apache-2.0 or MIT.
-
 Appendix — Example health endpoint
 ----------------------------------
 A minimal HTTP health endpoint that satisfies the health-check contract:
