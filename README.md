@@ -364,8 +364,3 @@ gcloud compute backend-services describe dr-multi-backend-service --global --for
 ```bash
 terraform output auto_failover_function_url
 ```
-
-If you'd like, I can:
-- Add a short diagram image to the Architecture section (please upload it),
-- Generate example unit tests for the auto_failover function,
-- Or convert ephemeral state to Cloud Storage-backed implementation and update the function code accordingly.
