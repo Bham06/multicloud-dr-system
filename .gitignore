@@ -1,0 +1,37 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment files
+.env
+
+# Terraform
+.terraform/
+terraform.tfstate*
+crash.log
+*.tfplan
+*.tfstate.*
+*-backup
+*.backup
+
+# Terraform variable files
+*.tfvars
+*.tfvars.json
+
+# OS files
+.DS_Store
+
+# Archives
+*.zip
+
+# Databases
+*.db
+*.sqlite
+
+# Editor
+.vscode/
+.idea/
