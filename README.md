@@ -11,13 +11,13 @@
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 
-An automated [multi-cloud disaster recovery system](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) implementing an active-passive failover pattern between Google Cloud Platform (primary) and AWS (secondary). The system features intelligent health monitoring with [automated failover orchestration via Cloud Functions](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) that dynamically routes traffic through a [GCP Global Load Balancer](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0), ensuring high availability across cloud providers. Built entirely with Infrastructure as Code using Terraform to demonstrate enterprise-grade disaster recovery architecture.
+An automated multi-cloud disaster recovery system implementing an active-passive failover pattern between Google Cloud Platform (primary) and AWS (secondary). The system features intelligent health monitoring with automated failover orchestration via Cloud Functions that dynamically routes traffic through a GCP Global Load Balancer, ensuring high availability across cloud providers. Built entirely with Infrastructure as Code using Terraform to demonstrate enterprise-grade disaster recovery architecture.
 
 ---
 
 ## 🏗️ Architecture
 
-The system uses a [GCP Global Load Balancer with URL Map routing to either the GCP Instance Group (primary) or an Internet NEG pointing to AWS Elastic IP (secondary)](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0):
+The system uses a GCP Global Load Balancer with URL Map routing to either the GCP Instance Group (primary) or an Internet NEG pointing to AWS Elastic IP (secondary):
 
 ```mermaid
 graph TB
@@ -69,13 +69,13 @@ graph TB
 
 ## ✨ Key Features
 
-* **Intelligent Automated Failover**: [Cloud Function monitors both backends and updates GCP URL map in real-time](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) when primary becomes unhealthy
-* **Single Entry Point**: [All traffic flows through one GCP Global Load Balancer IP](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0), routing dynamically to healthy backend
-* **Cross-Cloud Routing**: [Internet NEG enables seamless failover to AWS infrastructure via Elastic IP](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+* **Intelligent Automated Failover**: Cloud Function monitors both backends and updates GCP URL map in real-time when primary becomes unhealthy
+* **Single Entry Point**: All traffic flows through one GCP Global Load Balancer IP, routing dynamically to healthy backend
+* **Cross-Cloud Routing**: Internet NEG enables seamless failover to AWS infrastructure via Elastic IP
 * **Comprehensive IaC**: [19 modular Terraform files](https://github.com/Bham06/multicloud-dr-system/blob/984f880d2fb6a977a254cf49cd1e704f56620e35/terraform) managing networking, compute, databases, and serverless components
-* **Data Replication Pipeline**: [Automated GCS-to-S3 sync via Cloud Functions](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) ensures backup availability across clouds
-* **Database Disaster Recovery**: [Cloud SQL and RDS with backup/restore automation](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
-* **Event-Driven Monitoring**: [Cloud Monitoring with alerting on failover events](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+* **Data Replication Pipeline**: Automated GCS-to-S3 sync via Cloud Functions ensures backup availability across clouds
+* **Database Disaster Recovery**: Cloud SQL and RDS with backup/restore automation
+* **Event-Driven Monitoring**: Cloud Monitoring with alerting on failover events
 
 ---
 
@@ -83,20 +83,20 @@ graph TB
 
 ### Google Cloud Platform
 
-* **Compute**: [Compute Engine (VMs, Instance Groups), Cloud Functions (Python 3.11)](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
-* **Networking**: [Global Load Balancer, VPC, Internet NEG](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
-* **Data**: [Cloud SQL (PostgreSQL), Cloud Storage (GCS)](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
-* **Operations**: [Cloud Scheduler, Secret Manager, Cloud Monitoring](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+* **Compute**: Compute Engine (VMs, Instance Groups), Cloud Functions (Python 3.11)
+* **Networking**: Global Load Balancer, VPC, Internet NEG
+* **Data**: Cloud SQL (PostgreSQL), Cloud Storage (GCS)
+* **Operations**: Cloud Scheduler, Secret Manager, Cloud Monitoring
 
 ### Amazon Web Services
 
-* **Compute**: [EC2, Elastic IP](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
-* **Data**: [RDS (PostgreSQL), S3](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+* **Compute**: EC2, Elastic IP
+* **Data**: RDS (PostgreSQL), S3
 
 ### Infrastructure & Automation
 
 * **IaC**: Terraform for declarative infrastructure provisioning
-* **Languages**: [Python 3.11](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) (Cloud Functions), Bash (automation scripts)
+* **Languages**: Python 3.11 (Cloud Functions), Bash (automation scripts)
 
 ---
 
@@ -130,7 +130,6 @@ multicloud-dr-system/
     ├── deployment-aws.sh
     └── restore-db.sh
 ```
-*Source: [Repository structure](https://github.com/Bham06/multicloud-dr-system/blob/984f880d2fb6a977a254cf49cd1e704f56620e35/)*
 
 ---
 
@@ -138,21 +137,21 @@ multicloud-dr-system/
 
 ### Automated Failover Workflow
 
-1. **Health Monitoring**: [Cloud Scheduler triggers the auto-failover function periodically via HTTP](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+1. **Health Monitoring**: Cloud Scheduler triggers the auto-failover function periodically via HTTP
 
-2. **Health Assessment**: [Function checks both GCP and AWS health endpoints (expecting HTTP 200 + JSON {"status": "healthy"})](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) with 5-second timeout
+2. **Health Assessment**: Function checks both GCP and AWS health endpoints (expecting HTTP 200 + JSON {"status": "healthy"}) with 5-second timeout
 
-3. **Failover Decision**: [If the active backend is unhealthy and the secondary is healthy, the function updates the GCP URL map](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) to redirect traffic
+3. **Failover Decision**: If the active backend is unhealthy and the secondary is healthy, the function updates the GCP URL map to redirect traffic
 
-4. **Traffic Routing**: [All user traffic flows through the single Global Load Balancer IP to whichever backend is currently active](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+4. **Traffic Routing**: All user traffic flows through the single Global Load Balancer IP to whichever backend is currently active
 
-5. **Alerting**: [Cloud Monitoring emits structured events and alerts operators on failover actions](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+5. **Alerting**: Cloud Monitoring emits structured events and alerts operators on failover actions
 
 ### Data Synchronization
 
-* **Cross-Cloud Replication**: [GCS-to-S3 sync function ensures backup data is available in AWS](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) for disaster scenarios
+* **Cross-Cloud Replication**: GCS-to-S3 sync function ensures backup data is available in AWS for disaster scenarios
 
-* **Database Recovery**: [Cloud SQL backups can be restored to AWS RDS](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0), enabling full application failover
+* **Database Recovery**: Cloud SQL backups can be restored to AWS RDS, enabling full application failover
 
 ---
 
@@ -173,13 +172,13 @@ While this project demonstrates core DR capabilities, several enhancements would
 
 **Architectural Enhancements:**
 
-* **Advanced Health Checks**: [Implement latency thresholds, error rate monitoring, and exponential backoff](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0) to handle transient failures gracefully
+* **Advanced Health Checks**: Implement latency thresholds, error rate monitoring, and exponential backoff to handle transient failures gracefully
 * **Bidirectional Failback**: Add automated failback to primary with configurable cooldown periods
 * **Multi-Region AWS**: Expand secondary to multiple AWS regions for geographic redundancy
 
 **Engineering Best Practices:**
 
-* **Automated Testing**: [Implement unit tests for failover logic with mocked GCP APIs](https://app.dosu.dev/documents/e1513f8c-eb9e-4b78-b1b7-1a7b6a695fa0)
+* **Automated Testing**: Implement unit tests for failover logic with mocked GCP APIs
 * **Chaos Engineering**: Integrate fault injection tools (e.g., Chaos Monkey) for resilience testing
 * **Observability**: Add distributed tracing (OpenTelemetry) and custom metrics for deeper insights
 
