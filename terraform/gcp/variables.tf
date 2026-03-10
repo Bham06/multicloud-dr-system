@@ -53,13 +53,14 @@ variable "domain_name" {
   default     = ""
 }
 
-variable "alert_email" {
-  description = "Email address for failover alerts"
+variable "auth_token" {
+  description = "Slack Authentication Token"
   type        = string
+  sensitive   = true
 }
 
-# variable "slack_webhook_url" {
-#   description = "Slack webhook URL"
-#   type        = string
-#   sensitive   = true
-# }
+variable "slack_team" {
+  description = "Team for Multi Cloud DR alerts"
+  type        = string
+  default     = "Multi Cloud DR"
+}

@@ -1,4 +1,4 @@
-# Global Stativ IP
+# Global Static IP
 resource "google_compute_global_address" "lb" {
   name = "dr-lb-ip"
 }
@@ -79,6 +79,42 @@ resource "google_compute_backend_service" "aws_secondary" {
   log_config {
     enable      = true
     sample_rate = 1.0
+  }
+
+  connection_draining_timeout_sec = 60
+
+  # Outlier detection to compensate for lack of health checks
+  outlier_detection {
+    consecutive_errors                    = 3
+    consecutive_gateway_failure           = 3
+    enforcing_consecutive_errors          = 100
+    enforcing_consecutive_gateway_failure = 100
+    max_ejection_percent                  = 100
+
+    # Success rate detection 
+    success_rate_minimum_hosts  = 5
+    success_rate_request_volume = 100
+    success_rate_stdev_factor   = 1900
+  }
+}
+
+# AWS Health Check
+resource "google_compute_health_check" "aws_backend" {
+  name                = "dr-aws-backend-health-check"
+  check_interval_sec  = 10
+  timeout_sec         = 5 # More frequent for secondary
+  healthy_threshold   = 2
+  unhealthy_threshold = 3 # Tolerance for threshold
+
+  http_health_check {
+    port         = 80
+    request_path = "/health"
+    # For Internet NEG, using the FQDN in Host Header
+    host = "${replace(var.aws_eip, ".", "-")}.nip.io"
+  }
+
+  log_config {
+    enable = true
   }
 }
 
@@ -168,13 +204,22 @@ resource "google_project_iam_member" "auto_failover_logging" {
   member  = "serviceAccount:${google_service_account.auto_failover.email}"
 }
 
+# Grant firestore access to failover function
+resource "google_project_iam_member" "auto_failover_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.auto_failover.email}"
+}
+
 # Monitoring Alert Channel
-resource "google_monitoring_notification_channel" "email" {
-  display_name = "DR Failover Email Alerts"
-  type         = "email"
+resource "google_monitoring_notification_channel" "slack" {
+  display_name = "Slack Alerts"
+  type         = "slack"
 
   labels = {
-    email_address = var.alert_email
+    auth_token   = var.auth_token
+    channel_name = "#fyp-monitor"
+    team         = var.slack_team
   }
 }
 
@@ -219,7 +264,7 @@ resource "google_cloudfunctions2_function" "auto_failover" {
       GCP_BACKEND_SERVICE  = google_compute_backend_service.gcp_primary.name
       AWS_BACKEND_SERVICE  = google_compute_backend_service.aws_secondary.name
       URL_MAP_NAME         = google_compute_url_map.lb.name
-      GCP_HEALTH_CHECK_URL = "http://${google_compute_instance.primary.network_interface[0].network_ip}/health"
+      GCP_HEALTH_CHECK_URL = "http://${google_compute_global_address.lb.address}/health"
       AWS_HEALTH_CHECK_URL = "http://${var.aws_eip}/health"
     }
 
@@ -231,7 +276,7 @@ resource "google_cloudfunctions2_function" "auto_failover" {
 resource "google_cloud_scheduler_job" "auto_failover" {
   name             = "auto-failover-scheduler"
   description      = "Monitor health and trigger automated failover"
-  schedule         = "*/1 * * * *"
+  schedule         = "*/5 * * * *"
   time_zone        = "UTC"
   attempt_deadline = "60s"
   region           = var.region
@@ -258,47 +303,171 @@ resource "google_cloud_run_service_iam_member" "auto_failover_invoker" {
   member   = "serviceAccount:${google_service_account.auto_failover.email}"
 }
 
-# Alert Policy - GCP unhealthy
-resource "google_monitoring_alert_policy" "gcp_backend_unhealthy" {
-  display_name = "GCP Bakend Unhealthy - Auto Failover"
+# Alert Policy - GCP Unhealthy
+resource "google_monitoring_alert_policy" "failover_event" {
+  display_name = "DR Failover to AWS Occurred"
   combiner     = "OR"
 
   conditions {
-    display_name = "GCP Instance down"
+    display_name = "Failover event detected"
 
-    condition_threshold {
-      filter          = "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/uptime\""
-      duration        = "60s"
-      comparison      = "COMPARISON_LT"
-      threshold_value = 1
+    condition_matched_log {
+      filter = <<-EOT
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="auto-failover-function"
+        jsonPayload.event_type="failover"
+      EOT
 
-      aggregations {
-        alignment_period   = "60s"
-        per_series_aligner = "ALIGN_RATE"
+      label_extractors = {
+        "rto"  = "EXTRACT(jsonPayload.details.rto_seconds)"
+        "from" = "EXTRACT(jsonPayload.details.from)"
+        "to"   = "EXTRACT(jsonPayload.details.to)"
       }
     }
   }
 
-  notification_channels = [google_monitoring_notification_channel.email.id]
+  notification_channels = [google_monitoring_notification_channel.slack.id]
 
   alert_strategy {
-    auto_close = "1800s"
+    auto_close = "3600s" # Auto-close after 1 hour
+
+    # Max 1 alert per hour
+    notification_rate_limit {
+      period = "3600s"
+    }
+  }
+
+  documentation {
+    content = <<-EOT
+      DR FAILOVER EVENT
+      
+      The system has automatically failed over from GCP to AWS.
+      
+      NEXT STEPS:
+      1. Verify AWS backend: curl http://${var.aws_eip}/health
+      2. Check GCP issues: gcloud compute instances describe dr-app-primary
+      3. Review logs: gcloud functions logs read auto-failover-function --gen2
+      
+      System will automatically failback when GCP recovers.
+      
+      RTO: {{rto}} seconds
+      Direction: {{from}} → {{to}}
+    EOT
   }
 }
 
-# Alert Policy - Auto Failover Function Errors
-resource "google_monitoring_alert_policy" "auto_failover_errors" {
+# Alert Policy - Failback Event 
+resource "google_monitoring_alert_policy" "failback_event" {
+  display_name = "DR Failback to GCP Occurred"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Failback event detected"
+
+    condition_matched_log {
+      filter = <<-EOT
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="auto-failover-function"
+        jsonPayload.event_type="failback"
+      EOT
+
+      label_extractors = {
+        "rto"  = "EXTRACT(jsonPayload.details.rto_seconds)"
+        "from" = "EXTRACT(jsonPayload.details.from)"
+        "to"   = "EXTRACT(jsonPayload.details.to)"
+      }
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.slack.id]
+
+  alert_strategy {
+    auto_close = "3600s"
+
+    notification_rate_limit {
+      period = "3600s"
+    }
+  }
+
+  documentation {
+    content = <<-EOT
+      DR FAILBACK EVENT
+      
+      The system has automatically failed back from AWS to GCP.
+      GCP backend has recovered and is now serving traffic.
+      
+      RTO: {{rto}} seconds
+      Direction: {{from}} → {{to}}
+    EOT
+  }
+}
+
+# Alert Policy : Both Backends Unhealthy (Critical)
+resource "google_monitoring_alert_policy" "both_backends_unhealthy" {
+  display_name = "CRITICAL: Both DR Backends Unhealthy"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Both backends failed"
+
+    condition_matched_log {
+      filter = <<-EOT
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="auto-failover-function"
+        jsonPayload.event_type="both_unhealthy"
+        severity="ERROR"
+      EOT
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.slack.id]
+
+  alert_strategy {
+    auto_close = "1800s" # Auto-close after 30 minutes to accomodate for restrictions
+
+    notification_rate_limit {
+      period = "1800s" # Max 1 alert per 30 minutes
+    }
+  }
+
+  severity = "CRITICAL"
+
+  documentation {
+    content = <<-EOT
+      CRITICAL: BOTH DR BACKENDS UNHEALTHY
+      
+      This indicates a complete service outage.
+      
+      IMMEDIATE ACTIONS:
+      1. Check GCP: gcloud compute instances describe dr-app-primary --zone=${var.zone}
+      2. Check AWS: aws ec2 describe-instances --instance-ids i-XXXXX
+      3. Test LB: curl http://${google_compute_global_address.lb.address}/health
+      4. Review function logs
+      5. Consider manual intervention
+    EOT
+  }
+}
+
+# Alert Policy - Function Execution Failures
+resource "google_monitoring_alert_policy" "auto_failover_execution_failure" {
   display_name = "Auto-Failover Function Errors"
   combiner     = "OR"
 
   conditions {
-    display_name = "Function execution errors"
+    display_name = "Function execution failures"
 
     condition_threshold {
-      filter          = "resource.type=\"cloud_function\" AND resource.labels.function_name=\"auto-failover-function\" AND metric.type=\"cloudfunctions.googleapis.com/function/execution_count\" AND metric.labels.status!=\"ok\""
-      duration        = "60s"
+      filter = <<-EOT
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="auto-failover-function"
+        metric.type="run.googleapis.com/request_count"
+        metric.labels.response_code_class="5xx"
+      EOT
+
+      # Must fail for 5 minutes (not just 1 error)
+      duration        = "300s"
       comparison      = "COMPARISON_GT"
-      threshold_value = 0
+      threshold_value = 3
 
       aggregations {
         alignment_period   = "60s"
@@ -307,5 +476,29 @@ resource "google_monitoring_alert_policy" "auto_failover_errors" {
     }
   }
 
-  notification_channels = [google_monitoring_notification_channel.email.id]
+  notification_channels = [google_monitoring_notification_channel.slack.id]
+
+  alert_strategy {
+    auto_close = "1800s"
+
+    # notification_rate_limit {
+    #   period = "3600s" # Max 1 alert per hour
+    # }
+  }
+
+  documentation {
+    content = <<-EOT
+      Auto-Failover Function Experiencing Errors
+      
+      The failover automation may not be working correctly.
+      
+      ACTIONS:
+      1. Check logs: gcloud functions logs read auto-failover-function --gen2 --limit=50
+      2. Verify IAM permissions
+      3. Check URL map accessibility
+      4. Verify Firestore state
+      
+      Manual failover may be required.
+    EOT
+  }
 }

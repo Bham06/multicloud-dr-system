@@ -111,3 +111,4 @@ resource "google_compute_firewall" "log_denied" {
     metadata = "INCLUDE_ALL_METADATA"
   }
 }
+
