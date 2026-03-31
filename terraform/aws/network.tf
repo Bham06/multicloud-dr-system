@@ -9,6 +9,19 @@ resource "aws_vpc" "main" {
   }
 }
 
+# Internet Gateway
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "igw-dr-secondary"
+  }
+}
+
+# ===========================
+#     Public Subnet
+# ===========================
+
 # EC2 Subnet
 resource "aws_subnet" "app" {
   vpc_id                  = aws_vpc.main.id
@@ -20,6 +33,30 @@ resource "aws_subnet" "app" {
     Name = "subnet-app"
   }
 }
+
+# Route Table
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = {
+    Name = "rt-public"
+  }
+}
+
+# Associate route table with subnet
+resource "aws_route_table_association" "app" {
+  subnet_id      = aws_subnet.app.id
+  route_table_id = aws_route_table.public.id
+}
+
+# ==============
+# Private Subnet
+# ==============
 
 # RDS Subnet
 resource "aws_subnet" "db_1" {
@@ -43,34 +80,29 @@ resource "aws_subnet" "db_2" {
   }
 }
 
-# Internet Gateway
-resource "aws_internet_gateway" "main" {
+# Private route table
+resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "igw-dr-secondary"
+    Name = "rt-private"
   }
 }
 
-# Route Table
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
-  }
-
-  tags = {
-    Name = "rt-public"
-  }
+# Associate route table for private subnets
+resource "aws_route_table_association" "app_a" {
+  subnet_id      = aws_subnet.db_1.id
+  route_table_id = aws_route_table.private.id
 }
 
-# Associate route table with subnet
-resource "aws_route_table_association" "app" {
-  subnet_id      = aws_subnet.app.id
-  route_table_id = aws_route_table.public.id
+resource "aws_route_table_association" "app_b" {
+  subnet_id      = aws_subnet.db_2.id
+  route_table_id = aws_route_table.private.id
 }
+
+# ====================
+# Security Groups
+# ====================
 
 # Security Group for EC2
 resource "aws_security_group" "app" {
@@ -101,8 +133,17 @@ resource "aws_security_group" "app" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["98.90.182.178/32"]
+    cidr_blocks = ["0.0.0.0/0"] # Allow SSH from anywhere temporarily
     description = "Allow SSH from EC2 Elastic IP"
+  }
+
+  # Allow traffic from GCP VPC via VPN
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["10.0.1.0/24"]
+    description = "All traffic from GCP via VPN"
   }
 
   # Allow all outbound
@@ -133,15 +174,16 @@ resource "aws_security_group" "db" {
     description     = "Allow PostgreSQL from app"
   }
 
-  # Allow PostgreSQL from anywhere (for GCP backup restore)
+  # Allow PostgreSQL from anywhere (for GCP)
   ingress {
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.1.0/24"]
     description = "Allow PostgreSQL from anywhere"
   }
 
+  # Outbound for replication
   egress {
     from_port   = 0
     to_port     = 0

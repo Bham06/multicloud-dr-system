@@ -64,3 +64,38 @@ variable "slack_team" {
   type        = string
   default     = "Multi Cloud DR"
 }
+
+variable "aws_vpn_tunnel1_ip" {
+  description = "VPN GATEWAY FOR GCP VPN"
+  type        = string
+  sensitive   = true
+}
+
+variable "aws_vpn_tunnel2_ip" {
+  description = "VPN GATEWAY FOR GCP VPN"
+  type        = string
+  sensitive   = true
+}
+
+variable "shared_secret" {
+  description = "Shared Secret for VPN tunnel"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.shared_secret) >= 10
+    error_message = "VPN shared secret must be at least 10 characters"
+  }
+}
+
+variable "aws_vpc_cidr" {
+  description = "AWS VPC CIDR block for firewall rules"
+  type        = string
+  default     = "10.1.0.0/26"
+}
+
+variable "use_vpn" {
+  description = "Enable VPN tunnel monitoring and alerts"
+  type        = bool
+  default     = false
+}

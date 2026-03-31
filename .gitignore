@@ -27,6 +27,7 @@ crash.log
 
 # Archives
 *.zip
+automated-failover-test.sh
 
 # Databases
 *.db

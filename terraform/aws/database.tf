@@ -47,7 +47,33 @@ resource "aws_db_instance" "main" {
   # Performance Insights
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
 
+  parameter_group_name = aws_db_parameter_group.replication.name
+
   tags = {
     Name = "dr-secondary-db"
+  }
+}
+
+# Parameter Group for replication 
+resource "aws_db_parameter_group" "replication" {
+  name   = "dr-replication-params"
+  family = "postgres14"
+
+  parameter {
+    name         = "rds.logical_replication"
+    value        = "1"
+    apply_method = "pending-reboot"
+  }
+
+  parameter {
+    name         = "max_replication_slots"
+    value        = "10"
+    apply_method = "pending-reboot"
+  }
+
+  parameter {
+    name         = "max_wal_senders"
+    value        = "10"
+    apply_method = "pending-reboot"
   }
 }

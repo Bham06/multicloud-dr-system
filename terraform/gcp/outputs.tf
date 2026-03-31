@@ -91,3 +91,23 @@ output "backend_status_command" {
   value       = "gcloud compute backend-services describe dr-multi-backend-service --global --format='table(backends[].group.basename(),backends[].capacityScaler)'"
   description = "Command to check current backend capacities"
 }
+
+output "gcp_vpn_gateway_interface0_ip" {
+  description = "GCP VPN Gateway interface 0 IP (for AWS tunnel 1)"
+  value       = google_compute_ha_vpn_gateway.gcp_vpn.vpn_interfaces[0].ip_address
+}
+
+output "gcp_vpn_gateway_interface1_ip" {
+  description = "GCP VPN Gateway interface 1 IP (for AWS tunnel 2)"
+  value       = google_compute_ha_vpn_gateway.gcp_vpn.vpn_interfaces[1].ip_address
+}
+
+# output "vpn_tunnel_status" {
+#   description = "VPN Tunnel Status"
+#   value       = google_compute_vpn_tunnel.tunnel_to_aws.detailed_status
+# }
+
+output "cloud_sql_private_ip" {
+  description = "Cloud SQL private IP for RDS subscription"
+  value       = google_sql_database_instance.primary.private_ip_address
+}

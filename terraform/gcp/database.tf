@@ -23,8 +23,29 @@ resource "google_sql_database_instance" "primary" {
     }
 
     ip_configuration {
-      ipv4_enabled    = false
+      ipv4_enabled    = true
       private_network = google_compute_network.vpc.id
+
+      authorized_networks {
+        name  = "aws-vpc-via-vpn"
+        value = "10.1.1.0/26"
+      }
+    }
+
+    # Database flags for logical replication
+    database_flags {
+      name  = "cloudsql.logical_decoding"
+      value = "on"
+    }
+
+    database_flags {
+      name  = "max_replication_slots"
+      value = "10"
+    }
+
+    database_flags {
+      name  = "max_wal_senders"
+      value = "10"
     }
   }
 

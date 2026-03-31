@@ -72,7 +72,7 @@ graph TB
 * **Intelligent Automated Failover**: Cloud Function monitors both backends and updates GCP URL map in real-time when primary becomes unhealthy
 * **Single Entry Point**: All traffic flows through one GCP Global Load Balancer IP, routing dynamically to healthy backend
 * **Cross-Cloud Routing**: Internet NEG enables seamless failover to AWS infrastructure via Elastic IP
-* **Comprehensive IaC**: [19 modular Terraform files](https://github.com/Bham06/multicloud-dr-system/blob/984f880d2fb6a977a254cf49cd1e704f56620e35/terraform) managing networking, compute, databases, and serverless components
+* **Comprehensive IaC**: 19 modular Terraform files managing networking, compute, databases, and serverless components
 * **Data Replication Pipeline**: Automated GCS-to-S3 sync via Cloud Functions ensures backup availability across clouds
 * **Database Disaster Recovery**: Cloud SQL and RDS with backup/restore automation
 * **Event-Driven Monitoring**: Cloud Monitoring with alerting on failover events
@@ -125,9 +125,12 @@ multicloud-dr-system/
 │       ├── storage.tf                # S3 buckets for replicated data
 │       └── ...                       # Additional configuration files
 │
-└── scripts/                          # Deployment automation utilities
-    ├── deployment-gcp.sh
-    ├── deployment-aws.sh
+└── scripts/                          
+    ├── automated-failover-test.sh
+    ├── chaos-tests.sh
+    ├── dr-test.sh
+    ├── inegration-test.sh
+    ├── monitor-replication.sh
     └── restore-db.sh
 ```
 
@@ -155,14 +158,6 @@ multicloud-dr-system/
 
 ---
 
-## 📸 Screenshots / Outputs
-
-*This section can showcase:*
-
-* Terraform apply output with created resources
-* GCP Load Balancer configuration showing backend services
-* Cloud Function logs demonstrating successful failover
-* Cloud Monitoring dashboard with health metrics
 
 ---
 
@@ -188,10 +183,9 @@ While this project demonstrates core DR capabilities, several enhancements would
 
 **Humble**
 
-Portfolio Project demonstrating expertise in multi-cloud architecture, Infrastructure as Code, and automated disaster recovery systems.
+Final Year Project demonstrating expertise in multi-cloud architecture, Infrastructure as Code, and automated disaster recovery systems.
 
-* 🐙 GitHub: [@Bham06](https://github.com/Bham06)
+* 🐙 GitHub: [@Bham06](https://git.cs.bham.ac.uk/projects-2025-26/heu319)
 
 ---
 
-*This is a portfolio project designed to showcase technical skills in cloud architecture, automation, and infrastructure engineering. It is not intended for production deployment or external contributions.*
