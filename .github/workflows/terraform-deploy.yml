@@ -1,0 +1,162 @@
+name: Deploy Infrastructure
+
+on:
+    push:
+        branches: [main]
+        paths:
+            - "gcp/**"
+            - "aws/**"
+
+    workflow_dispatch: # Allow manual triggering
+
+jobs:
+    deploy-gcp:
+        name: Deploy GCP Infrastructure
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: 1.6.0
+
+            - name: Authenticate to GCP
+              uses: google-github-actions/auth@v1
+              with:
+                  credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+            - name: Setup gcloud CLI
+              uses: google-github-actions/setup-gcloud@v1
+
+            - name: Terraform Init
+              working-directory: ./gcp
+              run: terraform init
+
+            - name: Terraform Plan
+              working-directory: ./gcp
+              run: terraform plan -out=tfplan
+
+            - name: Terraform Apply
+              working-directory: ./gcp
+              run: terraform apply -auto-approve tfplan
+
+            - name: Save GCP Outputs
+              working-directory: ./gcp
+              run: |
+                  terraform output -json > gcp-outputs.json
+                  echo "GCP_LB_IP=$(terraform output -raw load_balancer_ip)" >> $GITHUB_ENV
+                  echo "GCP_VPN_IP=$(terraform output -raw gcp_vpn_gateway_ip)" >> $GITHUB_ENV
+
+            - name: Upload GCP Outputs
+              uses: actions/upload-artifact@v3
+              with:
+                  name: gcp-outputs
+                  path: gcp/gcp-outputs.json
+
+    deploy-aws:
+        name: Deploy AWS Infrastructure
+        runs-on: ubuntu-latest
+        needs: deploy-gcp # Wait for GCP to finish
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+
+            - name: Configure AWS Credentials
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  aws-region: ${{ secrets.AWS_REGION }}
+
+            - name: Download GCP Outputs
+              uses: actions/download-artifact@v3
+              with:
+                  name: gcp-outputs
+
+            - name: Update AWS Variables with GCP VPN IP
+              run: |
+                  GCP_VPN_IP=$(cat gcp-outputs.json | jq -r '.gcp_vpn_gateway_ip.value')
+                  echo "gcp_vpn_gateway_ip = \"$GCP_VPN_IP\"" >> aws/terraform.tfvars
+
+            - name: Terraform Init
+              working-directory: ./aws
+              run: terraform init
+
+            - name: Terraform Plan
+              working-directory: ./aws
+              run: terraform plan -out=tfplan
+
+            - name: Terraform Apply
+              working-directory: ./aws
+              run: terraform apply -auto-approve tfplan
+
+            - name: Save AWS Outputs
+              working-directory: ./aws
+              run: terraform output -json > aws-outputs.json
+
+    smoke-tests:
+        name: Post-Deployment Smoke Tests
+        runs-on: ubuntu-latest
+        needs: [deploy-gcp, deploy-aws]
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Test GCP Backend
+              run: |
+                  LB_IP="${{ env.GCP_LB_IP }}"
+                  RESPONSE=$(curl -s http://$LB_IP/health)
+                  echo "GCP Health: $RESPONSE"
+
+                  if echo "$RESPONSE" | grep -q "healthy"; then
+                    echo "✅ GCP backend is healthy"
+                  else
+                    echo "❌ GCP backend is unhealthy"
+                    exit 1
+                  fi
+
+            - name: Test Auto-Failover Function
+              run: |
+                  gcloud auth activate-service-account --key-file=<(echo '${{ secrets.GCP_SA_KEY }}')
+                  gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+
+                  gcloud functions call auto-failover-function \
+                    --gen2 \
+                    --region=${{ secrets.GCP_REGION }}
+
+            - name: Verify Firestore State
+              run: |
+                  STATE=$(gcloud firestore documents describe current_state \
+                    --collection-path=failover_state \
+                    --format=json | jq -r '.fields.active_backend.stringValue')
+
+                  echo "Current active backend: $STATE"
+
+    notify:
+        name: Send Notifications
+        runs-on: ubuntu-latest
+        needs: [deploy-gcp, deploy-aws, smoke-tests]
+        if: always()
+
+        steps:
+            - name: Slack Notification
+              uses: 8398a7/action-slack@v3
+              if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+              with:
+                  status: ${{ job.status }}
+                  text: |
+                      Deployment Status: ${{ job.status }}
+                      GCP: ${{ needs.deploy-gcp.result }}
+                      AWS: ${{ needs.deploy-aws.result }}
+                      Tests: ${{ needs.smoke-tests.result }}
+                  webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+              env:
+                  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

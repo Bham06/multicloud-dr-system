@@ -1,0 +1,129 @@
+name: Automated DR Testing
+
+on:
+    schedule:
+        - cron: "0 3 * * 0" # Every Sunday at 3 AM UTC
+
+    workflow_dispatch: # Allow manual triggering
+        inputs:
+            test_type:
+                description: "Type of test to run"
+                required: true
+                default: "failover"
+                type: choice
+                options:
+                    - failover
+                    - integration
+                    - chaos
+                    - all
+
+jobs:
+    failover-test:
+        name: Automated Failover Test
+        runs-on: ubuntu-latest
+        if: ${{ github.event.inputs.test_type == 'failover' || github.event.inputs.test_type == 'all' || github.event_name == 'schedule' }}
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Authenticate to GCP
+              uses: google-github-actions/auth@v1
+              with:
+                  credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+            - name: Setup gcloud CLI
+              uses: google-github-actions/setup-gcloud@v1
+
+            - name: Run Failover Test
+              run: |
+                  chmod +x scripts/automated-failover-test.sh
+                  ./scripts/automated-failover-test.sh
+
+            - name: Upload Test Results
+              uses: actions/upload-artifact@v3
+              if: always()
+              with:
+                  name: failover-test-results
+                  path: |
+                      *.log
+                      *.txt
+
+    integration-test:
+        name: Integration Tests
+        runs-on: ubuntu-latest
+        if: ${{ github.event.inputs.test_type == 'integration' || github.event.inputs.test_type == 'all' }}
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Authenticate to GCP
+              uses: google-github-actions/auth@v1
+              with:
+                  credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+            - name: Configure AWS
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  aws-region: ${{ secrets.AWS_REGION }}
+
+            - name: Run Integration Tests
+              run: |
+                  chmod +x scripts/integration-test.sh
+                  ./scripts/integration-test.sh
+
+    chaos-test:
+        name: Chaos Engineering Tests
+        runs-on: ubuntu-latest
+        if: ${{ github.event.inputs.test_type == 'chaos' || github.event.inputs.test_type == 'all' }}
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Authenticate to GCP
+              uses: google-github-actions/auth@v1
+              with:
+                  credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+            - name: Run Chaos Tests
+              run: |
+                  chmod +x scripts/chaos-tests.sh
+                  echo "y" | ./scripts/chaos-tests.sh  # Auto-confirm chaos tests
+
+    report:
+        name: Generate Test Report
+        runs-on: ubuntu-latest
+        needs: [failover-test, integration-test, chaos-test]
+        if: always()
+
+        steps:
+            - name: Download Test Results
+              uses: actions/download-artifact@v3
+              with:
+                  name: failover-test-results
+
+            - name: Generate Summary
+              run: |
+                  echo "# DR Test Results - $(date)" > test-summary.md
+                  echo "" >> test-summary.md
+                  echo "## Results:" >> test-summary.md
+                  echo "- Failover Test: ${{ needs.failover-test.result }}" >> test-summary.md
+                  echo "- Integration Test: ${{ needs.integration-test.result }}" >> test-summary.md
+                  echo "- Chaos Test: ${{ needs.chaos-test.result }}" >> test-summary.md
+
+            - name: Create GitHub Issue if Failed
+              if: ${{ needs.failover-test.result == 'failure' || needs.integration-test.result == 'failure' }}
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      github.rest.issues.create({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        title: '🚨 DR Test Failure - ' + new Date().toISOString().split('T')[0],
+                        body: 'Automated DR tests have failed. Please investigate immediately.\n\nWorkflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+                        labels: ['dr-test', 'urgent']
+                      });
