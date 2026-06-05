@@ -108,6 +108,7 @@ multicloud-dr-system/
 │   ├── gcp/                          # GCP infrastructure (primary)
 │   │   ├── functions/
 │   │   │   ├── auto-failover/        # Health monitoring & URL map updates
+│   │   │   │   └── requirements.txt  # includes tenacity for retry logic
 │   │   │   └── gcs-s3-sync/          # Cross-cloud data replication
 │   │   ├── network.tf                # VPC, subnets, firewall rules
 │   │   ├── compute.tf                # VM instances, instance groups
@@ -116,6 +117,7 @@ multicloud-dr-system/
 │   │   ├── storage.tf                # GCS buckets for backups
 │   │   ├── data.tf                   # Secret Manager, function packaging
 │   │   ├── monitoring.tf             # Monitoring, alerting, dashboards
+│   │   ├── github-oidc.tf            # GitHub OIDC integration for CI/CD
 │   │   └── ...                       # Additional configuration files
 │   │
 │   └── aws/                          # AWS infrastructure (secondary)
@@ -123,6 +125,8 @@ multicloud-dr-system/
 │       ├── compute.tf                # EC2 instances, Elastic IP
 │       ├── database.tf               # RDS (PostgreSQL)
 │       ├── storage.tf                # S3 buckets for replicated data
+│       ├── secrets.tf                # Secret Manager for credentials
+│       ├── github-oidc.tf            # GitHub OIDC integration for CI/CD
 │       └── ...                       # Additional configuration files
 │
 └── scripts/                          
@@ -142,11 +146,11 @@ multicloud-dr-system/
 
 1. **Health Monitoring**: Cloud Scheduler triggers the auto-failover function periodically via HTTP
 
-2. **Health Assessment**: Function checks both GCP and AWS health endpoints (expecting HTTP 200 + JSON {"status": "healthy"}) with 5-second timeout
+2. **Health Assessment**: Function checks both GCP and AWS health endpoints (expecting HTTP 200 + JSON {"status": "healthy"}) with automatic retry on transient network errors (3 attempts with exponential backoff via tenacity library)
 
 3. **Failover Decision**: If the active backend is unhealthy and the secondary is healthy, the function updates the GCP URL map to redirect traffic
 
-4. **Traffic Routing**: All user traffic flows through the single Global Load Balancer IP to whichever backend is currently active
+4. **Traffic Routing**: All user traffic flows through the single Global Load Balancer IP to whichever backend is currently active (propagation verified by polling)
 
 5. **Alerting**: Cloud Monitoring emits structured events and alerts operators on failover actions
 
@@ -167,13 +171,11 @@ While this project demonstrates core DR capabilities, several enhancements would
 
 **Architectural Enhancements:**
 
-* **Advanced Health Checks**: Implement latency thresholds, error rate monitoring, and exponential backoff to handle transient failures gracefully
-* **Bidirectional Failback**: Add automated failback to primary with configurable cooldown periods
+* **Bidirectional Failback**: Automated failback to primary is implemented with configurable hysteresis (REQUIRED_RECOVERIES = 6 consecutive health checks, ~30 minutes of sustained recovery)
 * **Multi-Region AWS**: Expand secondary to multiple AWS regions for geographic redundancy
 
 **Engineering Best Practices:**
 
-* **Automated Testing**: Implement unit tests for failover logic with mocked GCP APIs
 * **Chaos Engineering**: Integrate fault injection tools (e.g., Chaos Monkey) for resilience testing
 * **Observability**: Add distributed tracing (OpenTelemetry) and custom metrics for deeper insights
 
