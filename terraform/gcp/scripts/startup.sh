@@ -14,7 +14,33 @@ sudo apt-get install -y python3-pip nginx postgresql-client
 mkdir -p /opt/dr-app
 cd /opt/dr-app
 
-# Create Flask application
+# =================================
+#   FETCH DB PASSWORD AT RUNTIME
+# =================================
+
+# Create protected directory — only root can read the env file
+mkdir -p /etc/dr-app
+chmod 700 /etc/dr-app
+
+echo "Fetching DB credentials from Secret Manager..."
+set +x
+DB_PASSWORD=$(gcloud secrets versions access latest \
+  --secret=db-password \
+  --project="${project_id}" 2>/dev/null)
+
+if [ -z "$DB_PASSWORD" ]; then
+  echo "ERROR: Failed to fetch DB password from Secret Manager" >&2
+  exit 1
+fi
+
+printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD" > /etc/dr-app/env
+set -x
+
+chmod 600 /etc/dr-app/env
+chown root:root /etc/dr-app/env
+echo "DB credentials written to protected env file"
+
+# Create Flask application — reads DB password from environment only
 cat > app.py << 'EOF'
 from flask import Flask, jsonify
 import psycopg2
@@ -35,7 +61,7 @@ def init_db_pool():
             host="/cloudsql/${db_connection_name}",
             database="application",
             user="appuser",
-            password="${db_password}"
+            password=os.environ.get('DB_PASSWORD', '')
         )
         print("Database pool created successfully")
     except Exception as e:
@@ -62,7 +88,7 @@ def health():
             'reason': 'manual_test',
             'provider': '${provider_name}'
         }), 503
-    
+
     try:
         if db_pool:
             conn = db_pool.getconn()
@@ -70,7 +96,7 @@ def health():
             cursor.execute("SELECT 1")
             cursor.close()
             db_pool.putconn(conn)
-        
+
         return jsonify({
             'status': 'healthy',
             'provider': '${provider_name}',
@@ -93,7 +119,7 @@ def get_data():
         result = cursor.fetchone()
         cursor.close()
         db_pool.putconn(conn)
-        
+
         return jsonify({
             'timestamp': str(result[0]),
             'database_version': result[1],
@@ -109,7 +135,7 @@ EOF
 # Install dependencies
 pip3 install flask psycopg2-binary gunicorn
 
-# Create systemd service
+# Create systemd service — loads DB_PASSWORD from the protected env file
 cat > /etc/systemd/system/dr-app.service << 'EOF'
 [Unit]
 Description=DR Application
@@ -119,6 +145,7 @@ After=network.target
 Type=simple
 User=humble
 WorkingDirectory=/opt/dr-app
+EnvironmentFile=/etc/dr-app/env
 ExecStart=/usr/local/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 app:app
 Restart=always
 

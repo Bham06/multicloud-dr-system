@@ -8,14 +8,14 @@ exec 2>&1
 echo "Starting DR app deployment"
 
 # Update system
-sudo apt-get update 
+sudo apt-get update
 sudo apt-get install -y python3-pip nginx postgresql-client
 
 # Create app directory
 mkdir -p /opt/dr-app
 cd /opt/dr-app
 
-# Creating test app
+# Creating test app — reads DB password from environment, never hardcoded
 cat > app.py << 'EOF'
 from flask import Flask, jsonify
 import psycopg2
@@ -32,7 +32,7 @@ db_pool = psycopg2.pool.SimpleConnectionPool(
     port="${db_port}",
     database="${db_name}",
     user="${db_user}",
-    password="${db_password}"
+    password=os.environ.get('DB_PASSWORD', '')
 )
 
 @app.route('/')
@@ -50,14 +50,14 @@ def health():
     force_unhealthy = os.environ.get('FORCE_UNHEALTHY', 'false')
     if force_unhealthy.lower() == 'true':
         return jsonify({'status': 'unhealthy', 'provider': 'AWS'}), 503
-    
+
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         cursor.close()
         db_pool.putconn(conn)
-        
+
         return jsonify({
             'status': 'healthy',
             'provider': 'AWS',
@@ -74,6 +74,34 @@ EOF
 # Install dependencies
 pip3 install flask psycopg2-binary gunicorn
 
+# =================================
+#   FETCH DB PASSWORD AT RUNTIME
+# =================================
+
+# Create protected directory — only root can read the env file
+mkdir -p /etc/dr-app
+chmod 700 /etc/dr-app
+
+echo "Fetching DB credentials from Secrets Manager..."
+set +x
+DB_PASSWORD=$(aws secretsmanager get-secret-value \
+  --secret-id "${db_secret_arn}" \
+  --query SecretString \
+  --output text \
+  --region "${aws_region}" 2>/dev/null)
+
+if [ -z "$DB_PASSWORD" ]; then
+  echo "ERROR: Failed to fetch DB password from Secrets Manager" >&2
+  exit 1
+fi
+
+printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD" > /etc/dr-app/env
+set -x
+
+chmod 600 /etc/dr-app/env
+chown root:root /etc/dr-app/env
+echo "DB credentials written to protected env file"
+
 # Create systemd service
 cat > /etc/systemd/system/dr-app.service << 'EOF'
 [Unit]
@@ -84,6 +112,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/opt/dr-app
+EnvironmentFile=/etc/dr-app/env
 ExecStart=/usr/local/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 app:app
 Restart=always
 
@@ -112,11 +141,11 @@ EOF
 
 echo "Setting up database restore functionality"
 
-# Restore directory
 mkdir -p /opt/db-restore
 cd /opt/db-restore
 
-# Restore script
+# Restore script — fetches DB password from Secrets Manager at runtime
+# so it is never stored on disk in plaintext
 cat > /opt/db-restore/restore_db.sh << 'RESTORE_SCRIPT'
 #!/bin/bash
 
@@ -129,7 +158,7 @@ RDS_HOST="${db_host}"
 RDS_PORT="${db_port}"
 RDS_DB="${db_name}"
 RDS_USER="${db_user}"
-RDS_PASSWORD="${db_password}"
+DB_SECRET_ARN="${db_secret_arn}"
 TEMP_DIR="/tmp/db-restore"
 
 # Logging
@@ -140,7 +169,6 @@ exec 2>&1
 echo "[$(date)] ========================================"
 echo "[$(date)] Starting database restore check"
 
-# Create temp directory
 mkdir -p "$TEMP_DIR"
 
 # Get latest backup from S3
@@ -189,10 +217,25 @@ fi
 BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
 echo "[$(date)] Backup downloaded: $BACKUP_SIZE"
 
-# Restore to RDS
-echo "[$(date)] Restoring to RDS: $RDS_HOST:$RDS_PORT/$RDS_DB"
+# Fetch DB password from Secrets Manager at runtime — never stored on disk
+echo "[$(date)] Fetching DB credentials from Secrets Manager..."
+set +x
+RDS_PASSWORD=$(aws secretsmanager get-secret-value \
+    --secret-id "$DB_SECRET_ARN" \
+    --query SecretString \
+    --output text \
+    --region "$${AWS_DEFAULT_REGION:-us-east-1}" 2>/dev/null)
+
+if [ -z "$RDS_PASSWORD" ]; then
+    echo "[$(date)] ERROR: Failed to fetch DB password from Secrets Manager" >&2
+    exit 1
+fi
 
 export PGPASSWORD="$RDS_PASSWORD"
+set -x
+
+# Restore to RDS
+echo "[$(date)] Restoring to RDS: $RDS_HOST:$RDS_PORT/$RDS_DB"
 
 # Check RDS connectivity
 echo "[$(date)] Testing database connection..."
@@ -207,42 +250,39 @@ if psql -h "$RDS_HOST" \
      -U "$RDS_USER" \
      -d "$RDS_DB" \
      -f "$BACKUP_FILE" 2>&1 | tee -a "$LOG_FILE"; then
-    
-    echo "[$(date)] ✓ Database restore completed successfully"
+
+    echo "[$(date)] Database restore completed successfully"
     echo "$LATEST_BACKUP" > "$RESTORE_MARKER"
-    
+
     # Cleanup old backup files (keep last 3)
     echo "[$(date)] Cleaning up old backups..."
     ls -t "$${TEMP_DIR}"/*.sql 2>/dev/null | tail -n +4 | xargs -r rm
-    
-    # Calculate and report timing
+
     BACKUP_TIME=$(basename "$LATEST_BACKUP" | grep -oP '\d{8}_\d{6}' || echo "unknown")
     CURRENT_TIME=$(date -u +%Y%m%d_%H%M%S)
     echo "[$(date)] Backup timestamp: $BACKUP_TIME"
     echo "[$(date)] Restore timestamp: $CURRENT_TIME"
-    
-    # Report to application log
+
     logger -t db-restore "Successfully restored backup: $LATEST_BACKUP"
-    
+
 else
-    echo "[$(date)] ✗ ERROR: Database restore failed"
+    echo "[$(date)] ERROR: Database restore failed"
     logger -t db-restore -p user.err "Failed to restore backup: $LATEST_BACKUP"
     exit 1
 fi
 
 unset PGPASSWORD
+unset RDS_PASSWORD
 
 echo "[$(date)] Restore process completed"
 echo "[$(date)] ========================================"
 RESTORE_SCRIPT
 
-# Make restore script executable
 chmod +x /opt/db-restore/restore_db.sh
 
 # Create wrapper for cron (handles environment)
 cat > /opt/db-restore/run_restore.sh << 'WRAPPER'
 #!/bin/bash
-# Cron wrapper - ensures proper environment
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export AWS_DEFAULT_REGION=${aws_region}
 /opt/db-restore/restore_db.sh
@@ -254,7 +294,6 @@ chmod +x /opt/db-restore/run_restore.sh
 echo "[$(date)] Setting up cron job for database restore"
 (sudo crontab -l 2>/dev/null | grep -v restore_db.sh; echo "*/5 * * * * /opt/db-restore/run_restore.sh") | sudo crontab -
 
-# Verify cron job was added
 echo "[$(date)] Cron jobs configured:"
 sudo crontab -l | grep restore
 
@@ -274,7 +313,6 @@ LOGROTATE
 # Run initial restore (if backups exist)
 echo "[$(date)] Running initial database restore attempt..."
 /opt/db-restore/restore_db.sh || echo "[$(date)] Initial restore failed or no backups available yet"
-
 
 # Start services
 systemctl daemon-reload

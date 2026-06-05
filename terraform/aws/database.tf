@@ -29,7 +29,7 @@ resource "aws_db_instance" "main" {
   # Networking
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.db.id]
-  publicly_accessible    = true # For GCP backup restore 
+  publicly_accessible    = false
 
   # Backup
   backup_retention_period = 7

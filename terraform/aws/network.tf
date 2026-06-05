@@ -128,13 +128,16 @@ resource "aws_security_group" "app" {
     description = "Allow HTTPS from anywhere"
   }
 
-  # Allow SSH from IP
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Allow SSH from anywhere temporarily
-    description = "Allow SSH from EC2 Elastic IP"
+  # Allow SSH only from a specific admin CIDR — disabled when admin_cidr is empty
+  dynamic "ingress" {
+    for_each = var.admin_cidr != "" ? [var.admin_cidr] : []
+    content {
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [ingress.value]
+      description = "Allow SSH from admin CIDR"
+    }
   }
 
   # Allow traffic from GCP VPC via VPN

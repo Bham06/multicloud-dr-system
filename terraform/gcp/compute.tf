@@ -18,6 +18,13 @@ resource "google_project_iam_member" "app_storage_viewer" {
   member  = "serviceAccount:${google_service_account.app.email}"
 }
 
+# IAM - Cloud Logging Writer (required for structured application logs)
+resource "google_project_iam_member" "app_logging" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.app.email}"
+}
+
 # VM Instance
 resource "google_compute_instance" "primary" {
   name         = "dr-app-primary"
@@ -38,16 +45,24 @@ resource "google_compute_instance" "primary" {
     # No external IP
   }
 
+  # db_password is NOT passed here — the instance fetches it at runtime
+  # from Secret Manager using its service account identity.
   metadata = {
     startup-script = templatefile("${path.module}/scripts/startup.sh", {
       db_connection_name = google_sql_database_instance.primary.connection_name
-      db_password        = var.db_password
+      project_id         = var.project_id
       provider_name      = "GCP"
     })
   }
 
   service_account {
-    email  = google_service_account.app.email
+    email = google_service_account.app.email
+    # cloud-platform scope is intentional and GCP-recommended for VMs.
+    # Secret Manager's client library has no narrower OAuth scope, so this
+    # scope cannot be reduced without breaking the runtime secret fetch.
+    # Actual access is restricted to exactly what the IAM bindings above allow:
+    # cloudsql.client, storage.objectViewer, logging.logWriter,
+    # and secretmanager.secretAccessor on the db-password secret only.
     scopes = ["cloud-platform"]
   }
 

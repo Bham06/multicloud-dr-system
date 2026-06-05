@@ -1,0 +1,121 @@
+name: Terraform Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
+
+# Prevent concurrent applies from racing past the GCS / DynamoDB state locks.
+# cancel-in-progress: false means a queued run waits for the current one to
+# finish rather than being discarded — no apply is ever silently skipped.
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC token exchange
+
+env:
+  TF_VERSION: '1.6.6'
+
+jobs:
+  deploy-gcp:
+    name: Apply GCP Terraform
+    runs-on: ubuntu-latest
+    # 'production' environment requires manual approval from a reviewer before
+    # the apply step runs.  Configure required reviewers under:
+    # Settings → Environments → production → Required reviewers
+    environment: production
+
+    defaults:
+      run:
+        working-directory: terraform/gcp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # Exchange the GitHub Actions OIDC token for a short-lived GCP token.
+      # No service account JSON key is stored anywhere.
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -out=tfplan -input=false
+        env:
+          TF_VAR_project_id:            ${{ secrets.GCP_PROJECT_ID }}
+          TF_VAR_github_owner:          ${{ github.repository_owner }}
+          TF_VAR_github_repo:           ${{ github.event.repository.name }}
+          TF_VAR_db_password:           ${{ secrets.DB_PASSWORD }}
+          TF_VAR_aws_access_key_id:     ${{ secrets.AWS_SYNC_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SYNC_SECRET_ACCESS_KEY }}
+          TF_VAR_aws_eip:               ${{ secrets.AWS_EIP }}
+          TF_VAR_s3_bucket_name:        ${{ secrets.S3_BUCKET_NAME }}
+          TF_VAR_auth_token:            ${{ secrets.SLACK_AUTH_TOKEN }}
+          TF_VAR_slack_team:            ${{ secrets.SLACK_TEAM }}
+          TF_VAR_domain_name:           ${{ secrets.DOMAIN_NAME }}
+
+      # Apply exactly the plan that was reviewed — no re-plan between
+      # approval and apply so the approved changes cannot shift.
+      - name: Terraform Apply
+        run: terraform apply tfplan
+
+  deploy-aws:
+    name: Apply AWS Terraform
+    runs-on: ubuntu-latest
+    environment: production
+    needs: deploy-gcp
+
+    defaults:
+      run:
+        working-directory: terraform/aws
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # Exchange the GitHub Actions OIDC token for short-lived AWS STS credentials.
+      # No access key is stored anywhere.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region:     ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -out=tfplan -input=false
+        env:
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo:  ${{ github.event.repository.name }}
+          TF_VAR_db_password:  ${{ secrets.DB_PASSWORD }}
+          TF_VAR_admin_cidr:   ${{ secrets.ADMIN_CIDR }}
+          TF_VAR_region:       ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Apply
+        run: terraform apply tfplan

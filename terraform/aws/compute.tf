@@ -49,18 +49,26 @@ resource "aws_instance" "app" {
 
   iam_instance_profile = aws_iam_instance_profile.ec2_app_profile.name
 
-  # User data (cloud-init)
+  # User data (cloud-init) — db_password is NOT passed here.
+  # The instance fetches it at runtime from Secrets Manager using its IAM role.
   user_data = templatefile("${path.module}/scripts/user-data.sh", {
     db_host        = aws_db_instance.main.address
     db_port        = aws_db_instance.main.port
     db_name        = aws_db_instance.main.db_name
     db_user        = aws_db_instance.main.username
-    db_password    = var.db_password
+    db_secret_arn  = aws_secretsmanager_secret.db_password.arn
     s3_bucket_name = aws_s3_bucket.secondary.id
     aws_region     = var.region
   })
 
   user_data_replace_on_change = true
+
+  # Enforce IMDSv2 — prevents SSRF from reading instance metadata without a token
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
 
   tags = {
     Name = "dr-app-secondary"

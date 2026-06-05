@@ -1,3 +1,11 @@
+# Allow the VM service account to read the DB password from Secret Manager
+# so startup.sh can fetch it at runtime rather than receiving it via metadata.
+resource "google_secret_manager_secret_iam_member" "app_vm_db_password" {
+  secret_id = google_secret_manager_secret.db_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app.email}"
+}
+
 # ======================================
 #           AWS CREDENTIALS
 # ======================================
@@ -146,10 +154,10 @@ resource "google_secret_manager_secret_iam_member" "db_backup_db_password" {
   member    = "serviceAccount:${google_service_account.db_baackup_function.email}"
 }
 
-# Grant Cloud SQL Client Role
+# Grant Cloud SQL Client role so the backup function can connect via Auth Proxy
 resource "google_project_iam_member" "db_backup_sql_client" {
   project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
+  role    = "roles/cloudsql.client"
   member  = "serviceAccount:${google_service_account.db_baackup_function.email}"
 }
 

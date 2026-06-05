@@ -3,10 +3,11 @@ resource "google_compute_global_address" "lb" {
   name = "dr-lb-ip"
 }
 
-# Domain for test using nip.io 
+# Use var.domain_name when set; fall back to nip.io only for dev/test environments.
+# In production, always set var.domain_name to a real FQDN you control.
 locals {
   lb_ip_dashes = replace(google_compute_global_address.lb.address, ".", "-")
-  domain_name  = "${local.lb_ip_dashes}.nip.io"
+  domain_name  = var.domain_name != "" ? var.domain_name : "${local.lb_ip_dashes}.nip.io"
 }
 
 # Health Check
@@ -51,16 +52,17 @@ resource "google_compute_backend_service" "gcp_primary" {
   connection_draining_timeout_sec = 60
 }
 
-# AWS Internet NEG
+# AWS Internet NEG — INTERNET_IP_PORT uses the EIP directly so the failover
+# path has zero dependency on the third-party nip.io service.
 resource "google_compute_global_network_endpoint_group" "aws_secondary" {
   name                  = "dr-neg-aws-secondary"
-  network_endpoint_type = "INTERNET_FQDN_PORT"
+  network_endpoint_type = "INTERNET_IP_PORT"
   default_port          = 80
 }
 
 resource "google_compute_global_network_endpoint" "aws" {
   global_network_endpoint_group = google_compute_global_network_endpoint_group.aws_secondary.id
-  fqdn                          = "${replace(var.aws_eip, ".", "-")}.nip.io"
+  ip_address                    = var.aws_eip
   port                          = 80
 }
 
@@ -109,8 +111,6 @@ resource "google_compute_health_check" "aws_backend" {
   http_health_check {
     port         = 80
     request_path = "/health"
-    # For Internet NEG, using the FQDN in Host Header
-    host = "${replace(var.aws_eip, ".", "-")}.nip.io"
   }
 
   log_config {
@@ -257,7 +257,7 @@ resource "google_cloudfunctions2_function" "auto_failover" {
   service_config {
     max_instance_count = 1
     available_memory   = "256M"
-    timeout_seconds    = 60
+    timeout_seconds    = 300
 
     environment_variables = {
       PROJECT_ID           = var.project_id
@@ -266,6 +266,8 @@ resource "google_cloudfunctions2_function" "auto_failover" {
       URL_MAP_NAME         = google_compute_url_map.lb.name
       GCP_HEALTH_CHECK_URL = "http://${google_compute_global_address.lb.address}/health"
       AWS_HEALTH_CHECK_URL = "http://${var.aws_eip}/health"
+      REQUIRED_FAILURES    = "3"
+      REQUIRED_RECOVERIES  = "6"
     }
 
     service_account_email = google_service_account.auto_failover.email
@@ -278,7 +280,7 @@ resource "google_cloud_scheduler_job" "auto_failover" {
   description      = "Monitor health and trigger automated failover"
   schedule         = "*/5 * * * *"
   time_zone        = "UTC"
-  attempt_deadline = "60s"
+  attempt_deadline = "300s"
   region           = var.region
 
   http_target {
@@ -291,7 +293,10 @@ resource "google_cloud_scheduler_job" "auto_failover" {
   }
 
   retry_config {
-    retry_count = 1
+    retry_count          = 2
+    min_backoff_duration = "5s"
+    max_backoff_duration = "30s"
+    max_doublings        = 2
   }
 }
 
@@ -444,6 +449,56 @@ resource "google_monitoring_alert_policy" "both_backends_unhealthy" {
       3. Test LB: curl http://${google_compute_global_address.lb.address}/health
       4. Review function logs
       5. Consider manual intervention
+    EOT
+  }
+}
+
+# Alert Policy - Firestore Unavailable
+# Fires when the auto-failover function cannot read its state store and has
+# aborted the health-check cycle.  The system is effectively blind during this
+# window and an operator must investigate.
+resource "google_monitoring_alert_policy" "firestore_unavailable" {
+  display_name = "CRITICAL: Auto-Failover State Store Unavailable"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Firestore unreachable from auto-failover function"
+
+    condition_matched_log {
+      filter = <<-EOT
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="auto-failover-function"
+        jsonPayload.event_type="firestore_unavailable"
+      EOT
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.slack.id]
+
+  severity = "CRITICAL"
+
+  alert_strategy {
+    auto_close = "1800s"
+
+    notification_rate_limit {
+      period = "600s"
+    }
+  }
+
+  documentation {
+    content = <<-EOT
+      CRITICAL: Auto-Failover State Store (Firestore) Unavailable
+
+      The auto-failover function cannot read its state and is NOT making
+      failover decisions.  If GCP is degraded right now, failover to AWS
+      will NOT happen automatically.
+
+      IMMEDIATE ACTIONS:
+      1. Check Firestore status: https://status.cloud.google.com
+      2. Check function logs: gcloud functions logs read auto-failover-function --gen2
+      3. If GCP backend is unhealthy, trigger manual failover:
+         gcloud compute url-maps import dr-url-map ...
+      4. Investigate Firestore connectivity from the function's VPC
     EOT
   }
 }
