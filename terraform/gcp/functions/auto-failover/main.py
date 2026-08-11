@@ -12,11 +12,12 @@ PROJECT_ID = os.environ.get('PROJECT_ID')
 GCP_BACKEND_SERVICE = os.environ.get('GCP_BACKEND_SERVICE')
 AWS_BACKEND_SERVICE = os.environ.get('AWS_BACKEND_SERVICE')
 URL_MAP_NAME = os.environ.get('URL_MAP_NAME')
-GCP_HEALTH_CHECK_URL = os.environ.get('GCP_HEALTH_CHECK_URL')
+GCP_INSTANCE_GROUP = os.environ.get('GCP_INSTANCE_GROUP')
 AWS_HEALTH_CHECK_URL = os.environ.get('AWS_HEALTH_CHECK_URL')
 
 # Initialize clients
 url_map_client = compute_v1.UrlMapsClient()
+backend_service_client = compute_v1.BackendServicesClient()
 logging_client = cloud_logging.Client()
 logger = logging_client.logger('auto-failover')
 db = firestore.Client()
@@ -104,8 +105,67 @@ def emit_event(event_type, details):
         'timestamp': datetime.utcnow().isoformat()
     }, severity='WARNING' if event_type in ['failover', 'failback'] else 'ERROR')
 
+def check_gcp_backend_health():
+    """
+    Check GCP backend health via the load balancer's own health checkers.
+
+    This must not probe the load balancer IP: that address serves whichever
+    backend is currently active, so after a failover it would report AWS's
+    health as GCP's and immediately fail back to a dead primary. The GCP VM has
+    no external IP and this function has no VPC connector, so there is no direct
+    path to it either.
+
+    backendServices.getHealth reads the verdict of the health checks already
+    running against the instance group, which is authoritative and independent
+    of the URL map this function rewrites.
+
+    Returns True/False, or None if health could not be determined - an API
+    failure is not evidence that the backend is down.
+    """
+    try:
+        result = backend_service_client.get_health(
+            project=PROJECT_ID,
+            backend_service=GCP_BACKEND_SERVICE,
+            resource_group_reference_resource=compute_v1.ResourceGroupReference(
+                group=GCP_INSTANCE_GROUP
+            ),
+        )
+
+        statuses = list(result.health_status)
+
+        if not statuses:
+            # No instance has been probed yet (e.g. just after deploy).
+            logger.log_text(
+                "GCP health check: no instance health reported by the load balancer yet",
+                severity='WARNING'
+            )
+            return False
+
+        healthy = [s for s in statuses if s.health_state == 'HEALTHY']
+        is_healthy = len(healthy) > 0
+
+        logger.log_text(
+            f"GCP health check: {'HEALTHY' if is_healthy else 'UNHEALTHY'} "
+            f"({len(healthy)}/{len(statuses)} instances healthy)",
+            severity='INFO' if is_healthy else 'WARNING'
+        )
+        return is_healthy
+
+    except Exception as e:
+        logger.log_text(
+            f"GCP health check error (health undetermined): {str(e)}",
+            severity='ERROR'
+        )
+        return None
+
+
 def check_backend_health(url, backend_name):
-    """Check health of a backend by calling its health endpoint"""
+    """
+    Check health of a backend by calling its health endpoint directly.
+
+    Used for AWS, which sits behind an internet NEG that GCP cannot health
+    check, so it is probed straight at the Elastic IP.
+    """
     try:
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
@@ -371,9 +431,28 @@ def auto_failover(request):
         save_state(state)
     
     # Check health of both backends
-    gcp_healthy = check_backend_health(GCP_HEALTH_CHECK_URL, 'GCP')
+    gcp_healthy = check_gcp_backend_health()
     aws_healthy = check_backend_health(AWS_HEALTH_CHECK_URL, 'AWS')
-    
+
+    # An undetermined verdict is not a failure. Counting a transient Compute API
+    # error as one would spend a third of the hysteresis budget on an outage
+    # that never happened.
+    if gcp_healthy is None:
+        logger.log_text(
+            "Skipping failover decision this cycle: GCP health undetermined",
+            severity='WARNING'
+        )
+        return {
+            'status': 'success',
+            'action': 'health_undetermined',
+            'active_backend': current_active,
+            'gcp_healthy': None,
+            'aws_healthy': aws_healthy,
+            'consecutive_failures': consecutive_failures,
+            'consecutive_recoveries': consecutive_recoveries,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
     # Update state with current health
     state['gcp_healthy'] = gcp_healthy
     state['aws_healthy'] = aws_healthy

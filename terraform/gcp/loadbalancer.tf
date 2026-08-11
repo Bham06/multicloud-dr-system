@@ -198,6 +198,13 @@ resource "google_project_iam_member" "auto_failover_compute_admin" {
   member  = "serviceAccount:${google_service_account.auto_failover.email}"
 }
 
+# Read-only access so the function can call backendServices.getHealth
+resource "google_project_iam_member" "auto_failover_compute_viewer" {
+  project = var.project_id
+  role    = "roles/compute.viewer"
+  member  = "serviceAccount:${google_service_account.auto_failover.email}"
+}
+
 resource "google_project_iam_member" "auto_failover_logging" {
   project = var.project_id
   role    = "roles/logging.logWriter"
@@ -260,11 +267,18 @@ resource "google_cloudfunctions2_function" "auto_failover" {
     timeout_seconds    = 60
 
     environment_variables = {
-      PROJECT_ID           = var.project_id
-      GCP_BACKEND_SERVICE  = google_compute_backend_service.gcp_primary.name
-      AWS_BACKEND_SERVICE  = google_compute_backend_service.aws_secondary.name
-      URL_MAP_NAME         = google_compute_url_map.lb.name
-      GCP_HEALTH_CHECK_URL = "http://${google_compute_global_address.lb.address}/health"
+      PROJECT_ID          = var.project_id
+      GCP_BACKEND_SERVICE = google_compute_backend_service.gcp_primary.name
+      AWS_BACKEND_SERVICE = google_compute_backend_service.aws_secondary.name
+      URL_MAP_NAME        = google_compute_url_map.lb.name
+
+      # GCP health is read from the load balancer's health checkers via
+      # backendServices.getHealth, not probed over HTTP. Probing the LB address
+      # would measure whichever backend is currently active rather than GCP.
+      GCP_INSTANCE_GROUP = google_compute_instance_group.gcp.self_link
+
+      # AWS sits behind an internet NEG that GCP cannot health check, so it is
+      # probed directly at the Elastic IP.
       AWS_HEALTH_CHECK_URL = "http://${var.aws_eip}/health"
     }
 

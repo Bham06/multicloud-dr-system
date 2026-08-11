@@ -3,6 +3,11 @@ from google.cloud import storage as gcs_storage
 from google.cloud import secretmanager 
 import boto3
 import json
+import functions_framework
+
+# Function source archives are uploaded to the same bucket. They are not backup
+# data and must not be replicated to S3.
+SKIP_PREFIXES = ('functions/',)
 
 def get_secret(project_id, secret_id, version_id="latest"):
     '''Retrieve secrets from secret manager'''
@@ -11,13 +16,23 @@ def get_secret(project_id, secret_id, version_id="latest"):
     response = client.access_secret_version(request={"name":name})
     return response.payload.data.decode("UTF-8")
 
-def sync_file(event, context):
-    '''Sync file using object finalize event'''
-    file_name = event['name']
-    bucket_name = event['bucket']
-    
+@functions_framework.cloud_event
+def sync_file(cloud_event):
+    '''Sync file using object finalize event.
+
+    This is deployed as a 2nd-gen function, so the trigger delivers a single
+    CloudEvent rather than the (event, context) pair used by 1st-gen functions.
+    '''
+    data = cloud_event.data
+    file_name = data['name']
+    bucket_name = data['bucket']
+
     print(f"Triggered for file: {file_name} in bucket: {bucket_name}")
-    
+
+    if file_name.startswith(SKIP_PREFIXES):
+        print(f"Skipping {file_name}: not backup data")
+        return
+
     project_id = os.environ.get('GCP_PROJECT')
     
     # Retrieve AWS credentials

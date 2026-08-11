@@ -15,7 +15,6 @@ terraform.tfstate*
 crash.log
 *.tfplan
 *.tfstate.*
-*-backup
 *.backup
 
 # Terraform variable files
