@@ -93,3 +93,12 @@ variable "use_vpn" {
   type        = bool
   default     = false
 }
+variable "github_owner" {
+  description = "GitHub organization or user name that owns this repository"
+  type        = string
+}
+
+variable "github_repo" {
+  description = "GitHub repository name (without owner prefix)"
+  type        = string
+}

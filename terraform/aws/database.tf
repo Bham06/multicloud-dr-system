@@ -29,7 +29,9 @@ resource "aws_db_instance" "main" {
   # Networking
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.db.id]
-  publicly_accessible    = true # For GCP backup restore 
+  # Restores run from the EC2 instance inside this VPC, so the standby
+  # database has never needed a public endpoint.
+  publicly_accessible = false
 
   # Backup
   backup_retention_period = 7

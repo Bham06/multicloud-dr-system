@@ -57,6 +57,11 @@ def harness(tmp_path):
     write_stub(
         bin_dir / "aws",
         """
+        if [ "$1" = "secretsmanager" ]; then
+            [ "${STUB_SECRET_EXIT:-0}" != "0" ] && exit "$STUB_SECRET_EXIT"
+            echo "${STUB_SECRET_VALUE:-fetched-password}"
+            exit 0
+        fi
         if [ "$1" = "s3" ] && [ "$2" = "ls" ]; then
             [ -n "${STUB_LS_OUTPUT:-}" ] && echo "$STUB_LS_OUTPUT"
             exit 0
@@ -205,6 +210,32 @@ class TestRestore:
 
         assert result.returncode == 0
         assert len(harness.psql_calls()) == before, "re-restored an applied backup"
+
+    # ----------------------------------------------------------------------
+    # Credentials
+    # ----------------------------------------------------------------------
+
+    def test_password_is_fetched_from_secrets_manager_when_absent(self, harness):
+        """The password must not have to exist on disk for the cron to work."""
+        del harness.env["RDS_PASSWORD"]
+        result = harness.run(DB_SECRET_ARN="arn:aws:secretsmanager:::secret:dr/db-password")
+        assert result.returncode == 0, result.stdout
+        assert harness.marker.read_text().strip() == BACKUP_KEY
+
+    def test_missing_credentials_fail_before_touching_the_database(self, harness):
+        del harness.env["RDS_PASSWORD"]
+        result = harness.run()
+        assert result.returncode != 0
+        assert not any("--file=" in c for c in harness.psql_calls())
+
+    def test_unretrievable_secret_is_not_treated_as_an_empty_password(self, harness):
+        del harness.env["RDS_PASSWORD"]
+        result = harness.run(
+            DB_SECRET_ARN="arn:aws:secretsmanager:::secret:dr/db-password",
+            STUB_SECRET_EXIT=1,
+        )
+        assert result.returncode != 0
+        assert not any("--file=" in c for c in harness.psql_calls())
 
     def test_failed_download_does_not_attempt_a_restore(self, harness):
         result = harness.run(STUB_CP_EXIT=1)
