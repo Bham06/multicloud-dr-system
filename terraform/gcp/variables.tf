@@ -94,6 +94,16 @@ variable "use_vpn" {
   default     = false
 }
 
+variable "github_owner" {
+  description = "GitHub organization or user name that owns this repository"
+  type        = string
+}
+
+variable "github_repo" {
+  description = "GitHub repository name (without owner prefix)"
+  type        = string
+}
+
 variable "required_failures" {
   description = "Consecutive failed health checks before failing over to AWS"
   type        = number
