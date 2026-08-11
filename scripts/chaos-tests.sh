@@ -1,6 +1,15 @@
 #!/bin/bash
 # Chaos Engineering Tests - Simple Failure Injection
 
+# Overridable so the suite can be pointed at a rebuilt environment without
+# editing the script. The defaults describe the current deployment.
+LB_IP="${LB_IP:-34.36.128.254}"
+ZONE="${ZONE:-us-east1-b}"
+REGION="${REGION:-us-east1}"
+AWS_EIP="${AWS_EIP:-98.90.182.178}"
+# Only needed by the VPN tunnel test, which is not part of the prompted run.
+RDS_ENDPOINT="${RDS_ENDPOINT:-}"
+
 echo "=== Chaos Engineering Test Suite ==="
 echo "⚠️ WARNING: This will intentionally break things!"
 echo ""
@@ -11,13 +20,13 @@ chaos_test_network_partition() {
   echo "Simulating: GCP VM loses network connectivity"
   
   # SSH to GCP VM and disable network
-  gcloud compute ssh dr-app-primary --zone=us-east1-b --command="sudo iptables -A OUTPUT -j DROP"
+  gcloud compute ssh dr-app-primary --zone="$ZONE" --command="sudo iptables -A OUTPUT -j DROP"
   
   echo "Network disabled. Monitoring failover..."
   sleep 120  # Wait 2 minutes
   
   # Check if failover happened
-  PROVIDER=$(curl -s http://LOAD_BALANCER_IP/health | jq -r '.provider')
+  PROVIDER=$(curl -s http://$LB_IP/health | jq -r '.provider')
   
   if [ "$PROVIDER" == "AWS" ]; then
     echo "✓ System successfully failed over to AWS"
@@ -26,7 +35,7 @@ chaos_test_network_partition() {
   fi
   
   # Restore network
-  gcloud compute instances reset dr-app-primary --zone=us-east1-b
+  gcloud compute instances reset dr-app-primary --zone="$ZONE"
   echo "Network restored"
 }
 
@@ -37,15 +46,15 @@ chaos_test_cpu_spike() {
   echo "Simulating: GCP VM under heavy CPU load"
   
   # SSH and run CPU stress test
-  gcloud compute ssh dr-app-primary --zone=us-east1-b --command="
+  gcloud compute ssh dr-app-primary --zone="$ZONE" --command="
     stress-ng --cpu 4 --timeout 180s &
   "
   
   echo "CPU stress applied. Monitoring response times..."
   
   # Measure response time
-  for i in {1..18}; do
-    RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}\n' http://LOAD_BALANCER_IP/)
+  for _ in {1..18}; do
+    RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}\n' http://$LB_IP/)
     echo "  Response time: ${RESPONSE_TIME}s"
     
     if (( $(echo "$RESPONSE_TIME > 5" | bc -l) )); then
@@ -65,7 +74,7 @@ chaos_test_db_failure() {
   echo "Simulating: Application loses database connectivity"
   
   # Block PostgreSQL port
-  gcloud compute ssh dr-app-primary --zone=us-east1-b --command="
+  gcloud compute ssh dr-app-primary --zone="$ZONE" --command="
     sudo iptables -A OUTPUT -p tcp --dport 5432 -j DROP
   "
   
@@ -73,7 +82,7 @@ chaos_test_db_failure() {
   sleep 30
   
   # Check if health endpoint still responds
-  HEALTH=$(curl -s http://LOAD_BALANCER_IP/health | jq -r '.status')
+  HEALTH=$(curl -s http://$LB_IP/health | jq -r '.status')
   
   if [ "$HEALTH" == "unhealthy" ]; then
     echo "✓ System correctly reports unhealthy status"
@@ -82,7 +91,7 @@ chaos_test_db_failure() {
   fi
   
   # Restore
-  gcloud compute ssh dr-app-primary --zone=us-east1-b --command="
+  gcloud compute ssh dr-app-primary --zone="$ZONE" --command="
     sudo iptables -F
   "
   
@@ -97,14 +106,14 @@ chaos_test_vpn_failure() {
   
   # Delete VPN tunnel
   gcloud compute vpn-tunnels delete tunnel-to-aws \
-    --region=us-east1 \
+    --region="$REGION" \
     --quiet
   
   echo "VPN tunnel deleted. Checking impact on replication..."
   sleep 60
   
   # Check replication lag
-  LAG=$(ssh ubuntu@AWS_EIP "psql -h RDS_ENDPOINT -U appuser -d application -t -c \"SELECT pg_wal_lsn_diff(received_lsn, latest_end_lsn) FROM pg_stat_subscription;\"" 2>&1)
+  LAG=$(ssh "ubuntu@$AWS_EIP" "psql -h $RDS_ENDPOINT -U appuser -d application -t -c \"SELECT pg_wal_lsn_diff(received_lsn, latest_end_lsn) FROM pg_stat_subscription;\"" 2>&1)
   
   if [[ "$LAG" == *"error"* ]] || [ -z "$LAG" ]; then
     echo "✓ Replication correctly failed (expected)"
@@ -113,7 +122,7 @@ chaos_test_vpn_failure() {
   fi
   
   # Recreate tunnel (run Terraform)
-  cd gcp/
+  cd gcp/ || exit 1
   terraform apply -auto-approve -target=google_compute_vpn_tunnel.tunnel_to_aws
   
   echo "VPN tunnel recreated"
@@ -126,7 +135,7 @@ chaos_test_memory_pressure() {
   echo "Simulating: Low memory conditions"
   
   # Use stress-ng to consume memory
-  gcloud compute ssh dr-app-primary --zone=us-east1-b --command="
+  gcloud compute ssh dr-app-primary --zone="$ZONE" --command="
     stress-ng --vm 1 --vm-bytes 90% --timeout 120s &
   "
   
@@ -134,7 +143,7 @@ chaos_test_memory_pressure() {
   sleep 120
   
   # Check if system survived
-  HEALTH=$(curl -s http://LOAD_BALANCER_IP/health | jq -r '.status')
+  HEALTH=$(curl -s http://$LB_IP/health | jq -r '.status')
   
   if [ "$HEALTH" == "healthy" ]; then
     echo "✓ System survived memory pressure"

@@ -16,6 +16,16 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "ssh_public_key" {
+  description = "SSH public key authorized on the secondary EC2 instance"
+  type        = string
+
+  validation {
+    condition     = can(regex("^(ssh-rsa|ssh-ed25519|ecdsa-sha2-) ", var.ssh_public_key))
+    error_message = "ssh_public_key must be an OpenSSH public key, e.g. the contents of ~/.ssh/id_ed25519.pub"
+  }
+}
+
 variable "gcp_vpn_gateway_interface0_ip" {
   description = "GCP VPN Gateway Public IP"
   type        = string

@@ -5,6 +5,11 @@ terraform {
       source  = "hashicorp/google"
       version = "7.13.0"
     }
+    # Used by the archive_file data sources that package the Cloud Functions.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.7"
+    }
   }
 }
 

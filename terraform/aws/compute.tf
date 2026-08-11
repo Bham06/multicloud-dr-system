@@ -10,7 +10,7 @@ resource "aws_eip" "app" {
 # Key Pair
 resource "aws_key_pair" "app" {
   key_name   = "dr-app-key"
-  public_key = file("~/.ssh/id_ed25519.pub")
+  public_key = var.ssh_public_key
 }
 
 # EC2 Role
