@@ -1,0 +1,4 @@
+# Test-only dependencies. The Cloud Functions declare their own runtime
+# dependencies in terraform/gcp/functions/*/requirements.txt; the suite stubs
+# those out so it can run without cloud SDKs or credentials.
+pytest==8.3.4

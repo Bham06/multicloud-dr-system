@@ -3,9 +3,12 @@
 
 set -e
 
-PROJECT_ID="final-year-project1-484523"
-LB_IP="34.36.128.254"
-AWS_EIP="98.90.182.178"
+# Overridable so the suite can be pointed at a rebuilt environment without
+# editing the script. The defaults describe the current deployment.
+PROJECT_ID="${PROJECT_ID:-final-year-project1-484523}"
+LB_IP="${LB_IP:-34.36.128.254}"
+AWS_EIP="${AWS_EIP:-98.90.182.178}"
+REGION="${REGION:-us-east1}"
 
 echo "=== DR System Test Suite ==="
 echo "Started: $(date)"
@@ -35,7 +38,8 @@ echo ""
 echo "Test 2: Auto-Failover Function"
 FUNCTION_RESULT=$(gcloud functions call auto-failover-function \
   --gen2 \
-  --region=us-east1 \
+  --project="$PROJECT_ID" \
+  --region="$REGION" \
   --format=json | jq -r '.result.status')
 
 if [ "$FUNCTION_RESULT" == "success" ]; then
@@ -50,6 +54,7 @@ echo ""
 echo "Test 3: Firestore State"
 STATE=$(gcloud firestore documents describe current_state \
   --collection-path=failover_state \
+  --project="$PROJECT_ID" \
   --format=json | jq -r '.fields.active_backend.stringValue')
 
 echo "Current active backend: $STATE"

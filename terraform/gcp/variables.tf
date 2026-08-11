@@ -47,12 +47,6 @@ variable "aws_eip" {
   description = "AWS Elastic IP"
   type        = string
 }
-variable "domain_name" {
-  description = "Domain name for SSL certificate"
-  type        = string
-  default     = ""
-}
-
 variable "auth_token" {
   description = "Slack Authentication Token"
   type        = string

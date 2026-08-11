@@ -126,13 +126,15 @@ multicloud-dr-system/
 │       └── ...                       # Additional configuration files
 │
 └── scripts/                          
-    ├── automated-failover-test.sh
     ├── chaos-tests.sh
     ├── dr-test.sh
-    ├── inegration-test.sh
-    ├── monitor-replication.sh
-    └── restore-db.sh
+    ├── integration-test.sh
+    └── monitor-replication.sh
 ```
+
+> The database restore script lives at `terraform/aws/scripts/restore-db.sh`.
+> It is injected into the secondary instance at deploy time, so that file is
+> the one that actually runs in production.
 
 ---
 
@@ -158,6 +160,33 @@ multicloud-dr-system/
 
 ---
 
+## 🧪 Testing & Quality Assurance
+
+The system includes comprehensive testing infrastructure to ensure reliability:
+
+* **Unit Tests**: Automated tests for failover decision logic with mocked GCP APIs (tests/test_auto_failover.py)
+  * Hysteresis behavior: 3 consecutive failures before failover, 3 recoveries before failback
+  * Edge case handling: both backends unhealthy, undetermined health, API errors
+  * State reconciliation between Firestore and URL map
+  * Full failover decision table validation
+
+* **Terraform Validation**: Static checks (tests/test_terraform.py) verifying configuration correctness without cloud credentials
+  * Archive source directories exist
+  * Function entry points resolve to actual functions
+  * Environment variables read by code are set in Terraform
+  * Third-party imports are declared and pinned
+
+* **Chaos Testing**: Resilience validation scripts (scripts/chaos-tests.sh, scripts/dr-test.sh)
+  * Network partition simulation
+  * CPU and memory stress tests
+  * Database failure scenarios
+  * VPN tunnel failure testing
+
+* **CI/CD Pipelines**: GitHub Actions workflows running tests automatically
+  * `test-dr-system.yml`: pytest + shellcheck on every push and PR
+  * `terraform-pr.yml`: fmt, validate, tflint, optional plan on terraform changes
+  * `security-scan.yml`: Trivy IaC, gitleaks, pip-audit (weekly + on push)
+  * `terraform-deploy.yml`: plan → apply with health verification
 
 ---
 
@@ -173,8 +202,6 @@ While this project demonstrates core DR capabilities, several enhancements would
 
 **Engineering Best Practices:**
 
-* **Automated Testing**: Implement unit tests for failover logic with mocked GCP APIs
-* **Chaos Engineering**: Integrate fault injection tools (e.g., Chaos Monkey) for resilience testing
 * **Observability**: Add distributed tracing (OpenTelemetry) and custom metrics for deeper insights
 
 ---
