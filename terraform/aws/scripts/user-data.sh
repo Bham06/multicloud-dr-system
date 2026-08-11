@@ -32,7 +32,7 @@ db_pool = psycopg2.pool.SimpleConnectionPool(
     port="${db_port}",
     database="${db_name}",
     user="${db_user}",
-    password="${db_password}"
+    password=os.environ.get('DB_PASSWORD', '')
 )
 
 @app.route('/')
@@ -75,6 +75,37 @@ EOF
 pip3 install flask psycopg2-binary gunicorn
 
 # Create systemd service
+# =================================
+#        DATABASE CREDENTIALS
+# =================================
+#
+# user-data is readable from instance metadata, so the password is never
+# interpolated into it. The instance fetches it here using its IAM role and
+# writes it to a root-only file.
+
+mkdir -p /etc/dr-app
+chmod 700 /etc/dr-app
+
+echo "Fetching database credentials from Secrets Manager"
+# db_secret_arn and aws_region are Terraform template placeholders, substituted
+# before this ever reaches a shell.
+# shellcheck disable=SC2154
+DB_PASSWORD=$(aws secretsmanager get-secret-value \
+  --secret-id "${db_secret_arn}" \
+  --query SecretString \
+  --output text \
+  --region "${aws_region}")
+
+if [ -z "$DB_PASSWORD" ]; then
+  echo "ERROR: could not fetch the database password from Secrets Manager" >&2
+  exit 1
+fi
+
+printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD" > /etc/dr-app/env
+chown root:root /etc/dr-app/env
+chmod 600 /etc/dr-app/env
+unset DB_PASSWORD
+
 cat > /etc/systemd/system/dr-app.service << 'EOF'
 [Unit]
 Description=DR Application
@@ -83,6 +114,7 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
+EnvironmentFile=/etc/dr-app/env
 WorkingDirectory=/opt/dr-app
 ExecStart=/usr/local/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 app:app
 Restart=always
@@ -131,7 +163,7 @@ export RDS_HOST="${db_host}"
 export RDS_PORT="${db_port}"
 export RDS_DB="${db_name}"
 export RDS_USER="${db_user}"
-export RDS_PASSWORD="${db_password}"
+export DB_SECRET_ARN="${db_secret_arn}"
 export AWS_DEFAULT_REGION="${aws_region}"
 ENVFILE
 

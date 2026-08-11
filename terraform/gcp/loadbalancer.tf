@@ -267,6 +267,13 @@ resource "google_cloudfunctions2_function" "auto_failover" {
       # AWS sits behind an internet NEG that GCP cannot health check, so it is
       # probed directly at the Elastic IP.
       AWS_HEALTH_CHECK_URL = "http://${var.aws_eip}/health"
+
+      # Hysteresis, tunable without a code deploy. Recoveries are deliberately
+      # higher than failures: at a 5 minute interval these mean 15 minutes of
+      # sustained failure before leaving GCP, and 30 minutes of sustained health
+      # before returning to it.
+      REQUIRED_FAILURES   = tostring(var.required_failures)
+      REQUIRED_RECOVERIES = tostring(var.required_recoveries)
     }
 
     service_account_email = google_service_account.auto_failover.email

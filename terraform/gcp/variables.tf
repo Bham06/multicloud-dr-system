@@ -94,6 +94,38 @@ variable "use_vpn" {
   default     = false
 }
 
+variable "github_owner" {
+  description = "GitHub organization or user name that owns this repository"
+  type        = string
+}
+
+variable "github_repo" {
+  description = "GitHub repository name (without owner prefix)"
+  type        = string
+}
+
+variable "required_failures" {
+  description = "Consecutive failed health checks before failing over to AWS"
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.required_failures >= 1
+    error_message = "required_failures must be at least 1"
+  }
+}
+
+variable "required_recoveries" {
+  description = "Consecutive healthy checks before failing back to GCP"
+  type        = number
+  default     = 6
+
+  validation {
+    condition     = var.required_recoveries >= 1
+    error_message = "required_recoveries must be at least 1"
+  }
+}
+
 variable "domain_name" {
   description = "Domain you control, used for the managed TLS certificate. Leave empty to fall back to a nip.io name derived from the load balancer IP, which is fine for dev and test but depends on a third party."
   type        = string
