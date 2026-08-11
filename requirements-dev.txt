@@ -2,3 +2,7 @@
 # dependencies in terraform/gcp/functions/*/requirements.txt; the suite stubs
 # those out so it can run without cloud SDKs or credentials.
 pytest==8.3.4
+
+# Imported by the auto-failover function. Kept real rather than stubbed so the
+# retry behaviour under test is the behaviour that ships.
+tenacity==9.0.0

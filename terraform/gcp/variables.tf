@@ -93,3 +93,25 @@ variable "use_vpn" {
   type        = bool
   default     = false
 }
+
+variable "required_failures" {
+  description = "Consecutive failed health checks before failing over to AWS"
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.required_failures >= 1
+    error_message = "required_failures must be at least 1"
+  }
+}
+
+variable "required_recoveries" {
+  description = "Consecutive healthy checks before failing back to GCP"
+  type        = number
+  default     = 6
+
+  validation {
+    condition     = var.required_recoveries >= 1
+    error_message = "required_recoveries must be at least 1"
+  }
+}
