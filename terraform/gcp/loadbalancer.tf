@@ -3,10 +3,13 @@ resource "google_compute_global_address" "lb" {
   name = "dr-lb-ip"
 }
 
-# Domain for test using nip.io 
+# A Google-managed certificate cannot be issued for a bare IP, so unlike the
+# NEG this genuinely needs a domain. Set var.domain_name to one you control;
+# the nip.io fallback exists so dev and test environments still get valid TLS
+# without owning a domain.
 locals {
   lb_ip_dashes = replace(google_compute_global_address.lb.address, ".", "-")
-  domain_name  = "${local.lb_ip_dashes}.nip.io"
+  domain_name  = var.domain_name != "" ? var.domain_name : "${local.lb_ip_dashes}.nip.io"
 }
 
 # Health Check
@@ -51,16 +54,20 @@ resource "google_compute_backend_service" "gcp_primary" {
   connection_draining_timeout_sec = 60
 }
 
-# AWS Internet NEG
+# AWS Internet NEG.
+# INTERNET_IP_PORT points at the Elastic IP directly, so the failover data path
+# resolves no DNS at all. It previously used INTERNET_FQDN_PORT against a nip.io
+# name, which made reaching the secondary depend on a third-party DNS service
+# being up at exactly the moment the primary was not.
 resource "google_compute_global_network_endpoint_group" "aws_secondary" {
   name                  = "dr-neg-aws-secondary"
-  network_endpoint_type = "INTERNET_FQDN_PORT"
+  network_endpoint_type = "INTERNET_IP_PORT"
   default_port          = 80
 }
 
 resource "google_compute_global_network_endpoint" "aws" {
   global_network_endpoint_group = google_compute_global_network_endpoint_group.aws_secondary.id
-  fqdn                          = "${replace(var.aws_eip, ".", "-")}.nip.io"
+  ip_address                    = var.aws_eip
   port                          = 80
 }
 
@@ -95,26 +102,6 @@ resource "google_compute_backend_service" "aws_secondary" {
     success_rate_minimum_hosts  = 5
     success_rate_request_volume = 100
     success_rate_stdev_factor   = 1900
-  }
-}
-
-# AWS Health Check
-resource "google_compute_health_check" "aws_backend" {
-  name                = "dr-aws-backend-health-check"
-  check_interval_sec  = 10
-  timeout_sec         = 5 # More frequent for secondary
-  healthy_threshold   = 2
-  unhealthy_threshold = 3 # Tolerance for threshold
-
-  http_health_check {
-    port         = 80
-    request_path = "/health"
-    # For Internet NEG, using the FQDN in Host Header
-    host = "${replace(var.aws_eip, ".", "-")}.nip.io"
-  }
-
-  log_config {
-    enable = true
   }
 }
 

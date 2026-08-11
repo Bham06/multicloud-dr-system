@@ -125,3 +125,9 @@ variable "required_recoveries" {
     error_message = "required_recoveries must be at least 1"
   }
 }
+
+variable "domain_name" {
+  description = "Domain you control, used for the managed TLS certificate. Leave empty to fall back to a nip.io name derived from the load balancer IP, which is fine for dev and test but depends on a third party."
+  type        = string
+  default     = ""
+}
