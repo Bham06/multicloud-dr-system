@@ -69,6 +69,21 @@ def test_archive_file_source_dirs_exist(stack):
 
 
 @pytest.mark.parametrize("stack", STACKS)
+def test_file_sources_exist(stack):
+    """
+    file() reads are resolved at plan time, same as archive_file. The restore
+    script is injected into the instance this way, so a rename here breaks the
+    deploy rather than the tests.
+    """
+    stack_dir = TERRAFORM_DIR / stack
+    referenced = re.findall(
+        r'\bfile\(\s*"\$\{path\.module\}/([^"]+)"', tf_text(stack_dir)
+    )
+    missing = sorted(r for r in referenced if not (stack_dir / r).is_file())
+    assert not missing, f"file() source does not exist in {stack}: {missing}"
+
+
+@pytest.mark.parametrize("stack", STACKS)
 def test_templatefile_sources_exist(stack):
     stack_dir = TERRAFORM_DIR / stack
     referenced = re.findall(

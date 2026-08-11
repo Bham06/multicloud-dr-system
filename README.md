@@ -126,13 +126,15 @@ multicloud-dr-system/
 │       └── ...                       # Additional configuration files
 │
 └── scripts/                          
-    ├── automated-failover-test.sh
     ├── chaos-tests.sh
     ├── dr-test.sh
-    ├── inegration-test.sh
-    ├── monitor-replication.sh
-    └── restore-db.sh
+    ├── integration-test.sh
+    └── monitor-replication.sh
 ```
+
+> The database restore script lives at `terraform/aws/scripts/restore-db.sh`.
+> It is injected into the secondary instance at deploy time, so that file is
+> the one that actually runs in production.
 
 ---
 

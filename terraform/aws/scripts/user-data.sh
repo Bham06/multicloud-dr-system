@@ -116,125 +116,27 @@ echo "Setting up database restore functionality"
 mkdir -p /opt/db-restore
 cd /opt/db-restore
 
-# Restore script
+# Restore script. The canonical source lives at
+# terraform/aws/scripts/restore-db.sh and is injected here at deploy time, so
+# there is exactly one copy of the restore logic to keep correct.
 cat > /opt/db-restore/restore_db.sh << 'RESTORE_SCRIPT'
-#!/bin/bash
-
-set -e
-
-# Configuration
-S3_BUCKET_NAME="${s3_bucket_name}"
-BACKUP_PREFIX="backups/"
-RDS_HOST="${db_host}"
-RDS_PORT="${db_port}"
-RDS_DB="${db_name}"
-RDS_USER="${db_user}"
-RDS_PASSWORD="${db_password}"
-TEMP_DIR="/tmp/db-restore"
-
-# Logging
-LOG_FILE="/var/log/db-restore.log"
-exec 1>> "$LOG_FILE"
-exec 2>&1
-
-echo "[$(date)] ========================================"
-echo "[$(date)] Starting database restore check"
-
-# Create temp directory
-mkdir -p "$TEMP_DIR"
-
-# Get latest backup from S3
-echo "[$(date)] Checking S3 for latest backup..."
-LATEST_BACKUP=$(aws s3 ls "s3://$${S3_BUCKET_NAME}/$${BACKUP_PREFIX}" \
-    --recursive \
-    2>/dev/null \
-    | sort \
-    | tail -n 1 \
-    | awk '{print $4}')
-
-if [ -z "$LATEST_BACKUP" ]; then
-    echo "[$(date)] No backups found in S3 bucket: s3://$${S3_BUCKET_NAME}/$${BACKUP_PREFIX}"
-    exit 0
-fi
-
-echo "[$(date)] Latest backup found: $LATEST_BACKUP"
-
-# Check if this backup has already been restored
-RESTORE_MARKER="$${TEMP_DIR}/.last_restored"
-if [ -f "$RESTORE_MARKER" ]; then
-    LAST_RESTORED=$(cat "$RESTORE_MARKER")
-    if [ "$LAST_RESTORED" = "$LATEST_BACKUP" ]; then
-        echo "[$(date)] Backup already restored, skipping"
-        exit 0
-    fi
-    echo "[$(date)] New backup detected. Previous: $LAST_RESTORED"
-fi
-
-# Download backup from S3
-BACKUP_FILE="$${TEMP_DIR}/$(basename $LATEST_BACKUP)"
-echo "[$(date)] Downloading backup to: $BACKUP_FILE"
-
-if aws s3 cp "s3://$${S3_BUCKET_NAME}/$${LATEST_BACKUP}" "$BACKUP_FILE" 2>&1; then
-    echo "[$(date)] Download successful"
-else
-    echo "[$(date)] ERROR: Failed to download backup from S3"
-    exit 1
-fi
-
-if [ ! -f "$BACKUP_FILE" ]; then
-    echo "[$(date)] ERROR: Backup file does not exist after download"
-    exit 1
-fi
-
-BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-echo "[$(date)] Backup downloaded: $BACKUP_SIZE"
-
-# Restore to RDS
-echo "[$(date)] Restoring to RDS: $RDS_HOST:$RDS_PORT/$RDS_DB"
-
-export PGPASSWORD="$RDS_PASSWORD"
-
-# Check RDS connectivity
-echo "[$(date)] Testing database connection..."
-if ! pg_isready -h "$RDS_HOST" -p "$RDS_PORT" -U "$RDS_USER" -d "$RDS_DB" -q 2>/dev/null; then
-    echo "[$(date)] WARNING: Database not ready, but attempting restore anyway..."
-fi
-
-# Restore database
-echo "[$(date)] Executing SQL restore..."
-if psql -h "$RDS_HOST" \
-     -p "$RDS_PORT" \
-     -U "$RDS_USER" \
-     -d "$RDS_DB" \
-     -f "$BACKUP_FILE" 2>&1 | tee -a "$LOG_FILE"; then
-    
-    echo "[$(date)] ✓ Database restore completed successfully"
-    echo "$LATEST_BACKUP" > "$RESTORE_MARKER"
-    
-    # Cleanup old backup files (keep last 3)
-    echo "[$(date)] Cleaning up old backups..."
-    ls -t "$${TEMP_DIR}"/*.sql 2>/dev/null | tail -n +4 | xargs -r rm
-    
-    # Calculate and report timing
-    BACKUP_TIME=$(basename "$LATEST_BACKUP" | grep -oP '\d{8}_\d{6}' || echo "unknown")
-    CURRENT_TIME=$(date -u +%Y%m%d_%H%M%S)
-    echo "[$(date)] Backup timestamp: $BACKUP_TIME"
-    echo "[$(date)] Restore timestamp: $CURRENT_TIME"
-    
-    # Report to application log
-    logger -t db-restore "Successfully restored backup: $LATEST_BACKUP"
-    
-else
-    echo "[$(date)] ✗ ERROR: Database restore failed"
-    logger -t db-restore -p user.err "Failed to restore backup: $LATEST_BACKUP"
-    exit 1
-fi
-
-unset PGPASSWORD
-
-echo "[$(date)] Restore process completed"
-echo "[$(date)] ========================================"
+${restore_script}
 RESTORE_SCRIPT
+
+# Configuration lives in an env file rather than being baked into the script,
+# so the database password is not left in a world-readable file.
+cat > /opt/db-restore/env << 'ENVFILE'
+export S3_BUCKET_NAME="${s3_bucket_name}"
+export RDS_HOST="${db_host}"
+export RDS_PORT="${db_port}"
+export RDS_DB="${db_name}"
+export RDS_USER="${db_user}"
+export RDS_PASSWORD="${db_password}"
+export AWS_DEFAULT_REGION="${aws_region}"
+ENVFILE
+
+chown root:root /opt/db-restore/env
+chmod 600 /opt/db-restore/env
 
 # Make restore script executable
 chmod +x /opt/db-restore/restore_db.sh
@@ -244,11 +146,12 @@ cat > /opt/db-restore/run_restore.sh << 'WRAPPER'
 #!/bin/bash
 # Cron wrapper - ensures proper environment
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export AWS_DEFAULT_REGION=${aws_region}
-/opt/db-restore/restore_db.sh
+set -a
+# shellcheck disable=SC1091
+. /opt/db-restore/env
+set +a
+exec /opt/db-restore/restore_db.sh
 WRAPPER
-
-chmod +x /opt/db-restore/run_restore.sh
 
 # Add to root's crontab (every 5 minutes)
 echo "[$(date)] Setting up cron job for database restore"
@@ -273,7 +176,8 @@ LOGROTATE
 
 # Run initial restore (if backups exist)
 echo "[$(date)] Running initial database restore attempt..."
-/opt/db-restore/restore_db.sh || echo "[$(date)] Initial restore failed or no backups available yet"
+# Via the wrapper, so it picks up the environment the same way cron does.
+/opt/db-restore/run_restore.sh || echo "[$(date)] Initial restore failed or no backups available yet"
 
 
 # Start services
