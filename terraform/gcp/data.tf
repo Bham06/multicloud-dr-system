@@ -146,10 +146,12 @@ resource "google_secret_manager_secret_iam_member" "db_backup_db_password" {
   member    = "serviceAccount:${google_service_account.db_baackup_function.email}"
 }
 
-# Grant Cloud SQL Client Role
+# Grant Cloud SQL export rights.
+# instances.export requires cloudsql.instances.export, which roles/cloudsql.client
+# does not carry. Cloud SQL IAM has no per-instance binding, so this is project-scoped.
 resource "google_project_iam_member" "db_backup_sql_client" {
   project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
+  role    = "roles/cloudsql.admin"
   member  = "serviceAccount:${google_service_account.db_baackup_function.email}"
 }
 
@@ -158,6 +160,15 @@ resource "google_storage_bucket_iam_member" "db_backup_writer" {
   bucket = google_storage_bucket.primary.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.db_baackup_function.email}"
+}
+
+# The export is performed by the Cloud SQL service itself, which writes to GCS as
+# the instance's own service agent rather than as the calling function. Without
+# this the export fails even though the function has bucket access.
+resource "google_storage_bucket_iam_member" "cloudsql_backup_writer" {
+  bucket = google_storage_bucket.primary.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_sql_database_instance.primary.service_account_email_address}"
 }
 
 # Archive DB backup function source
