@@ -18,7 +18,17 @@ RDS_HOST="${RDS_HOST:?RDS_HOST is required}"
 RDS_PORT="${RDS_PORT:-5432}"
 RDS_DB="${RDS_DB:?RDS_DB is required}"
 RDS_USER="${RDS_USER:?RDS_USER is required}"
-RDS_PASSWORD="${RDS_PASSWORD:?RDS_PASSWORD is required}"
+
+# The password is fetched from Secrets Manager at run time when an ARN is
+# supplied, so it is never written to disk or into instance metadata. Manual
+# runs and tests may still set RDS_PASSWORD directly.
+if [ -z "${RDS_PASSWORD:-}" ] && [ -n "${DB_SECRET_ARN:-}" ]; then
+    RDS_PASSWORD=$(aws secretsmanager get-secret-value \
+        --secret-id "$DB_SECRET_ARN" \
+        --query SecretString \
+        --output text)
+fi
+RDS_PASSWORD="${RDS_PASSWORD:?set RDS_PASSWORD, or DB_SECRET_ARN to fetch it}"
 TEMP_DIR="${TEMP_DIR:-/tmp/db-restore}"
 LOG_FILE="${LOG_FILE:-/var/log/db-restore.log}"
 LOCK_FILE="${LOCK_FILE:-/var/lock/db-restore.lock}"
