@@ -42,9 +42,9 @@ output "access_url_https" {
 #   description = "SSL certificate provisioning status"
 # }
 
-output "nip_io_domain" {
+output "lb_domain" {
   value       = local.domain_name
-  description = "Auto-generated nip.io domain"
+  description = "Domain on the managed TLS certificate: var.domain_name when set, otherwise a nip.io fallback"
 }
 
 output "gcs_primary_bucket" {
@@ -69,12 +69,7 @@ output "db_backup_function_url" {
 
 output "aws_elastic_ip" {
   value       = var.aws_eip
-  description = "AWS Elastic IP for Internet NEG"
-}
-
-output "aws_fqdn" {
-  value       = "${replace(var.aws_eip, ".", "-")}.nip.io"
-  description = "AWS FQDN used in Internet NEG"
+  description = "AWS Elastic IP the Internet NEG points at directly"
 }
 
 output "auto_failover_function_url" {

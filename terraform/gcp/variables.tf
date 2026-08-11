@@ -93,3 +93,9 @@ variable "use_vpn" {
   type        = bool
   default     = false
 }
+
+variable "domain_name" {
+  description = "Domain you control, used for the managed TLS certificate. Leave empty to fall back to a nip.io name derived from the load balancer IP, which is fine for dev and test but depends on a third party."
+  type        = string
+  default     = ""
+}

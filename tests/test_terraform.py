@@ -159,6 +159,30 @@ def test_requirements_are_pinned(fn_dir):
 # --------------------------------------------------------------------------
 
 
+def test_failover_data_path_resolves_no_dns():
+    """
+    The internet NEG must address AWS by IP.
+
+    It previously used INTERNET_FQDN_PORT against a nip.io name, which made
+    reaching the secondary depend on a third-party DNS service being up at
+    exactly the moment the primary was not. The TLS certificate still uses a
+    domain, because a managed certificate cannot be issued for a bare IP - that
+    is a control-plane dependency, not one in the request path.
+    """
+    text = tf_text(GCP_DIR)
+
+    neg_blocks = re.findall(
+        r'resource\s+"google_compute_global_network_endpoint(?:_group)?"[^{]*\{(.*?)\n\}',
+        text,
+        re.S,
+    )
+    assert neg_blocks, "expected an internet NEG for the AWS backend"
+
+    for block in neg_blocks:
+        assert "INTERNET_FQDN_PORT" not in block, "NEG addresses AWS by DNS name"
+        assert "fqdn" not in block, "NEG endpoint carries an fqdn instead of an IP"
+
+
 def test_no_source_files_are_git_ignored():
     """
     Regression test for the root cause of the missing function: .gitignore
