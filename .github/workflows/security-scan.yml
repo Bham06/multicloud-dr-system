@@ -33,10 +33,13 @@ jobs:
           scan-ref: terraform
           format: sarif
           output: trivy-iac.sarif
-          severity: HIGH,CRITICAL
-          # Report rather than block. This stack has known accepted findings
-          # (public database endpoints) tracked separately; failing the build on
-          # them would train everyone to ignore this job.
+          # HIGH,CRITICAL alone returned nothing, including for the publicly
+          # reachable Cloud SQL and RDS endpoints, which Trivy rates MEDIUM. A
+          # scan that is silent about known exposure is worse than no scan.
+          severity: MEDIUM,HIGH,CRITICAL
+          # Report rather than block. The public database endpoints are known
+          # and tracked separately; failing the build on them would train
+          # everyone to ignore this job.
           exit-code: '0'
 
       - name: Upload results
