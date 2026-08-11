@@ -58,6 +58,10 @@ resource "aws_instance" "app" {
     db_password    = var.db_password
     s3_bucket_name = aws_s3_bucket.secondary.id
     aws_region     = var.region
+
+    # Single source of truth for the restore logic. It reads its configuration
+    # from the environment, so it needs no interpolation of its own.
+    restore_script = file("${path.module}/scripts/restore-db.sh")
   })
 
   user_data_replace_on_change = true

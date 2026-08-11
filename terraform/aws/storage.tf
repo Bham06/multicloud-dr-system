@@ -23,19 +23,61 @@ resource "aws_s3_bucket_versioning" "secondary" {
   }
 }
 
-# Lifecycle rule
-# resource "aws_s3_bucket_lifecycle_configuration" "secondary" {
-#   bucket = aws_s3_bucket.secondary.id
+# Lifecycle rule.
+# Mirrors the 30-day deletion on the GCS source bucket. Without this the
+# replicated copies accumulate indefinitely, so the secondary's storage cost
+# grows without bound while the primary's stays flat.
+resource "aws_s3_bucket_lifecycle_configuration" "secondary" {
+  bucket = aws_s3_bucket.secondary.id
 
-#   rule {
-#     id     = "delete-old-backups"
-#     status = "Enabled"
+  rule {
+    id     = "delete-old-backups"
+    status = "Enabled"
 
-#     expiration {
-#       days = 30
-#     }
-#   }
-# }
+    filter {
+      prefix = "backups/"
+    }
+
+    expiration {
+      days = 30
+    }
+
+    # Versioning is enabled, so expiring the current object only hides it
+    # behind a delete marker. This is what actually reclaims the storage.
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
+  # Must be its own rule: AWS rejects expired_object_delete_marker alongside
+  # days in a single expiration block.
+  rule {
+    id     = "clean-expired-delete-markers"
+    status = "Enabled"
+
+    filter {
+      prefix = "backups/"
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  # Incomplete uploads are invisible in the console but still billed.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.secondary]
+}
 
 # Block public access
 resource "aws_s3_bucket_public_access_block" "secondary" {
