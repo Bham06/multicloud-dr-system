@@ -236,6 +236,104 @@ def test_aws_timeout_is_not_healthy(failover):
 
 
 # --------------------------------------------------------------------------
+# Trustworthy state
+# --------------------------------------------------------------------------
+
+
+def test_firestore_outage_aborts_the_cycle(failover):
+    """
+    The old behaviour returned a default claiming GCP was active and both
+    backends healthy. During a Firestore outage mid-incident that is invented
+    state, and acting on it can move traffic the wrong way.
+    """
+    url_map = arrange(
+        failover,
+        gcp_health=("UNHEALTHY",),
+        consecutive_failures=failover.REQUIRED_FAILURES - 1,
+    )
+    failover.db = MagicMock()
+    failover.db.collection.side_effect = RuntimeError("firestore unavailable")
+
+    result = failover.auto_failover(request=None)
+
+    assert result["action"] == "firestore_unavailable"
+    assert url_map.updates == []
+
+
+def test_every_cycle_is_traceable(failover):
+    arrange(failover)
+    first = failover.auto_failover(request=None)
+    second = failover.auto_failover(request=None)
+
+    assert first["cycle_id"] and second["cycle_id"]
+    assert first["cycle_id"] != second["cycle_id"]
+
+
+# --------------------------------------------------------------------------
+# Transient errors
+# --------------------------------------------------------------------------
+
+
+def test_transient_network_error_is_retried_before_giving_up(failover):
+    """
+    A momentary blip must not read as "AWS is down" and block a failover that
+    is genuinely needed. AWS has no undetermined state to fall back on the way
+    GCP does, so the retry happens here instead.
+    """
+    arrange(failover)
+    failover._fetch_health.retry.sleep = lambda _seconds: None
+    failover.requests.get = MagicMock(
+        side_effect=failover.requests.exceptions.ConnectionError()
+    )
+
+    assert failover.check_backend_health("http://aws/health", "AWS") is False
+    assert failover.requests.get.call_count == 3
+
+
+def test_http_error_response_is_not_retried(failover):
+    """A 5xx is a real health signal, not a blip - retrying only delays the
+    failover."""
+    arrange(failover)
+    failover._fetch_health.retry.sleep = lambda _seconds: None
+    failover.requests.get = MagicMock(return_value=aws_response(status_code=503))
+
+    assert failover.check_backend_health("http://aws/health", "AWS") is False
+    assert failover.requests.get.call_count == 1
+
+
+def test_recovered_transient_error_reports_healthy(failover):
+    arrange(failover)
+    failover._fetch_health.retry.sleep = lambda _seconds: None
+    failover.requests.get = MagicMock(
+        side_effect=[
+            failover.requests.exceptions.Timeout(),
+            aws_response(healthy=True),
+        ]
+    )
+
+    assert failover.check_backend_health("http://aws/health", "AWS") is True
+
+
+# --------------------------------------------------------------------------
+# Propagation
+# --------------------------------------------------------------------------
+
+
+def test_propagation_confirmed_when_the_url_map_already_agrees(failover):
+    arrange(failover, active="gcp")
+    assert failover.wait_for_backend_propagation("gcp", max_wait_secs=0) is True
+
+
+def test_propagation_gives_up_when_the_url_map_never_converges(failover):
+    """
+    Replaces a fixed five-second sleep, which was both too long in the common
+    case and no guarantee in the rare one.
+    """
+    arrange(failover, active="gcp")
+    assert failover.wait_for_backend_propagation("aws", max_wait_secs=0) is False
+
+
+# --------------------------------------------------------------------------
 # State reconciliation
 # --------------------------------------------------------------------------
 
