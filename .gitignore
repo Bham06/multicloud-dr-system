@@ -17,9 +17,13 @@ crash.log
 *.tfstate.*
 *.backup
 
-# Terraform variable files
+# Terraform variable files. These carry real values and must stay out of the
+# repo — with one deliberate exception: the placeholder file the Trivy job feeds
+# to the scanner. It holds nothing real and has to be committed for CI to read
+# it. Terraform will not auto-load it under this name.
 *.tfvars
 *.tfvars.json
+!terraform/scan.tfvars
 
 # OS files
 .DS_Store

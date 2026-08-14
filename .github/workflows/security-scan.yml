@@ -30,13 +30,27 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
-          scan-ref: terraform
+          # Scan from the repo root, not from terraform/. Trivy writes SARIF
+          # paths relative to the scan root, so scanning `terraform` produced
+          # locations like `aws/database.tf`. Those resolve to nothing in this
+          # repo, and code scanning silently discards alerts whose paths it
+          # cannot find — which is why this job reported 0 alerts while finding
+          # 30+ misconfigurations. From `.` the paths come out as
+          # `terraform/aws/database.tf` and the alerts land.
+          scan-ref: .
+          skip-dirs: '**/.terraform'
+          # Without values Trivy cannot evaluate the root modules and warns
+          # "Variable values were not found". Any check reading a
+          # variable-derived attribute is then evaluated against an unknown.
+          tf-vars: terraform/scan.tfvars
           format: sarif
           output: trivy-iac.sarif
-          # HIGH,CRITICAL alone returned nothing, including for the publicly
-          # reachable Cloud SQL and RDS endpoints, which Trivy rates MEDIUM. A
-          # scan that is silent about known exposure is worse than no scan.
-          severity: MEDIUM,HIGH,CRITICAL
+          # No `severity` filter on purpose. With format: sarif the action
+          # builds the report with all severities unless
+          # limit-severities-for-sarif is set, so a severity input here would be
+          # silently ignored. Filtering belongs in the code scanning UI, where
+          # it does not throw away findings on the way in.
+          #
           # Report rather than block. The public database endpoints are known
           # and tracked separately; failing the build on them would train
           # everyone to ignore this job.
