@@ -145,3 +145,9 @@ jobs:
           TF_VAR_ssh_public_key: ${{ secrets.EC2_SSH_PUBLIC_KEY }}
           # Both stacks
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          # Scope the OIDC trust to this repository. Not secrets — they must
+          # match the repo the workflow is running in, so they are read from the
+          # event rather than configured, which keeps a fork from inheriting the
+          # upstream repo's trust policy.
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo: ${{ github.event.repository.name }}

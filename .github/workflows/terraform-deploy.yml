@@ -67,6 +67,9 @@ jobs:
           TF_VAR_gcp_vpn_gateway_interface0_ip: ${{ secrets.GCP_VPN_GATEWAY_IP0 }}
           TF_VAR_gcp_vpn_gateway_interface1_ip: ${{ secrets.GCP_VPN_GATEWAY_IP1 }}
           TF_VAR_vpn_shared_secret: ${{ secrets.VPN_SHARED_SECRET }}
+          # Scope the OIDC trust to this repository. See terraform-pr.yml.
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo: ${{ github.event.repository.name }}
 
       # Applies the saved plan, so what ships is exactly what was reviewed.
       - name: terraform apply
@@ -119,6 +122,9 @@ jobs:
           TF_VAR_aws_vpn_tunnel1_ip: ${{ secrets.AWS_VPN_TUNNEL1_IP }}
           TF_VAR_aws_vpn_tunnel2_ip: ${{ secrets.AWS_VPN_TUNNEL2_IP }}
           TF_VAR_shared_secret: ${{ secrets.VPN_SHARED_SECRET }}
+          # Scope the OIDC trust to this repository. See terraform-pr.yml.
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo: ${{ github.event.repository.name }}
 
       - name: terraform apply
         run: terraform apply -input=false -lock-timeout=5m tfplan

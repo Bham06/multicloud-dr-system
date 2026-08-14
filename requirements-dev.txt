@@ -6,3 +6,8 @@ pytest==8.3.4
 # Imported by the auto-failover function. Kept real rather than stubbed so the
 # retry behaviour under test is the behaviour that ships.
 tenacity==9.0.0
+
+# Used by the workflow tests, which read the GitHub Actions YAML per job. The
+# variable wiring they check is job-scoped, so a regex over the whole file
+# cannot tell the AWS apply from the GCP one.
+pyyaml==6.0.2
